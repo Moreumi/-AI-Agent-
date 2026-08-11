@@ -3,7 +3,8 @@ from fastapi import APIRouter
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.orchestrator import route_request
 from app.services.state_service import state
-from app.data.sample_data import orders
+
+from app.data.sample_data import orders, payments
 
 
 # =========================================================
@@ -27,7 +28,8 @@ def chat(request: ChatRequest):
         user_input=request.message,
         customer_id=request.customer_id,
         orders=orders,
-        state=state
+        state=state,
+        payments=payments
     )
 
     return ChatResponse(

@@ -127,3 +127,170 @@ def generate_order_response(result: dict) -> str:
             )
 
     return "주문 상태를 확인하는 중 문제가 발생했습니다."
+
+
+# =========================================================
+# 결제 완료 확인
+# =========================================================
+
+def check_payment_completion(
+    orders: list[dict],
+    payments: list[dict],
+    customer_id: int,
+    order_id: int | None = None
+) -> dict:
+
+    # 해당 고객의 주문만 조회
+    customer_orders = [
+        order
+        for order in orders
+        if order["customer_id"] == customer_id
+    ]
+
+    # ---------------------------------------------------------
+    # 사용자가 주문번호를 직접 입력한 경우
+    # ---------------------------------------------------------
+    if order_id is not None:
+
+        selected_order = next(
+            (
+                order
+                for order in customer_orders
+                if order["order_id"] == order_id
+            ),
+            None
+        )
+
+        # 해당 고객의 주문이 아닌 경우
+        if selected_order is None:
+            return {
+                "result_type": "not_found"
+            }
+
+        selected_order_id = order_id
+
+    # ---------------------------------------------------------
+    # 주문번호가 없는 경우
+    # ---------------------------------------------------------
+    else:
+
+        # 고객의 주문 자체가 없는 경우
+        if len(customer_orders) == 0:
+            return {
+                "result_type": "not_found"
+            }
+
+        # 주문이 여러 개라면 사용자가 선택해야 함
+        if len(customer_orders) > 1:
+            return {
+                "result_type": "need_order_selection",
+                "candidate_orders": [
+                    {
+                        "order_id": order["order_id"],
+                        "order_date": order["order_date"],
+                        "total_price": order["total_price"]
+                    }
+                    for order in customer_orders
+                ]
+            }
+
+        # 주문이 하나라면 자동 선택
+        selected_order_id = customer_orders[0]["order_id"]
+
+    # ---------------------------------------------------------
+    # 선택된 주문의 결제 데이터 조회
+    # ---------------------------------------------------------
+    payment = next(
+        (
+            payment
+            for payment in payments
+            if payment["order_id"] == selected_order_id
+        ),
+        None
+    )
+
+    # 결제 데이터가 없는 경우
+    if payment is None:
+        return {
+            "result_type": "not_found"
+        }
+
+    # 결제 데이터 조회 성공
+    return {
+        "result_type": "success",
+        "order_id": selected_order_id,
+        "payment_id": payment["payment_id"],
+        "payment_status": payment["payment_status"],
+        "payment_method": payment["payment_method"],
+        "payment_amount": payment["payment_amount"],
+        "payment_date": payment["payment_date"]
+    }
+
+
+# =========================================================
+# 결제 완료 확인 응답 생성
+# =========================================================
+
+def generate_payment_response(result: dict) -> str:
+
+    result_type = result["result_type"]
+
+    # ---------------------------------------------------------
+    # 주문 또는 결제 정보를 찾지 못한 경우
+    # ---------------------------------------------------------
+    if result_type == "not_found":
+        return "확인할 수 있는 주문 또는 결제 정보가 없습니다."
+
+    # ---------------------------------------------------------
+    # 주문이 여러 개라 사용자의 선택이 필요한 경우
+    # ---------------------------------------------------------
+    if result_type == "need_order_selection":
+
+        candidate_orders = result["candidate_orders"]
+
+        order_list = "\n".join(
+            [
+                f"- 주문번호 {order['order_id']} / "
+                f"{order['order_date']} / "
+                f"{order['total_price']:,}원"
+                for order in candidate_orders
+            ]
+        )
+
+        return (
+            "확인되는 주문이 여러 건 있습니다.\n"
+            "결제 여부를 확인할 주문을 선택해주세요.\n\n"
+            f"{order_list}"
+        )
+
+    # ---------------------------------------------------------
+    # 결제 데이터 조회 성공
+    # ---------------------------------------------------------
+    if result_type == "success":
+
+        order_id = result["order_id"]
+        payment_status = result["payment_status"]
+        payment_method = result["payment_method"]
+        payment_amount = result["payment_amount"]
+        payment_date = result["payment_date"]
+
+        if payment_status == "payment_completed":
+            return (
+                f"주문번호 {order_id}의 결제가 정상적으로 완료되었습니다.\n"
+                f"결제금액: {payment_amount:,}원\n"
+                f"결제수단: {payment_method}\n"
+                f"결제일: {payment_date}"
+            )
+
+        if payment_status == "payment_failed":
+            return (
+                f"주문번호 {order_id}의 결제가 완료되지 않았습니다. "
+                "결제 시도 중 실패한 것으로 확인됩니다."
+            )
+
+        if payment_status == "payment_canceled":
+            return (
+                f"주문번호 {order_id}의 결제는 취소된 상태입니다."
+            )
+
+    return "결제 상태를 확인할 수 없습니다."
