@@ -1,0 +1,132 @@
+
+main.py
+
+    app
+    → FastAPI 애플리케이션 자체를 생성
+
+    include_router(chat_router)
+    → /chat 요청을 routers/chat.py가 처리하도록 연결
+
+    include_router(health_router)
+    → /health 요청을 routers/health.py가 처리하도록 연결
+
+[routers]
+
+routers/health.py
+
+    router
+    → /health URL을 담당하는 Router 생성
+
+    health_check()
+    → GET /health/ 요청을 받음
+    → FastAPI 서버가 정상적으로 실행 중인지 확인하기 위해
+        {"status": "ok"} 반환
+
+-----------------------------------------------
+
+routers/chat.py
+
+    router
+    → /chat URL을 담당하는 Router 생성
+
+    chat()
+    → POST /chat/ 요청 수신
+    → ChatRequest에서 message, customer_id 받음
+    → route_request()에 전달
+    → Orchestrator의 처리 결과를 받음
+    → ChatResponse 형태로 반환
+
+[services]
+
+services/llm_service.py
+: 사용자 input을 llm으로 분석해서 'userrequest' 형식으로 반환할 준비
+
+    llm
+    → 사용할 GPT 모델을 연결
+    → 현재는 gpt-4.1-mini 사용
+
+    structured_llm
+    → LLM의 자유로운 응답을 UserRequest 형식에 맞는 Structured Output으로 반환하도록 설정
+
+    classification_prompt
+    → 사용자 질문을 어떤 기준으로 분류할지 정의
+    → intent, cs_category, sub_intent, order_id 판단 기준 포함
+
+    classification_chain
+    → classification_prompt와 structured_llm을 연결
+    → 사용자 자연어 질문을 구조화된 UserRequest 결과로 변환
+
+-----------------------------------------------
+
+services/order_payment_service.py
+
+    check_order_completion()
+    → 주문 데이터를 확인하고 구조화된 결과 반환
+
+    generate_order_response()
+    → 그 결과를 사용자에게 보여줄 문장으로 변환
+
+-----------------------------------------------
+
+services/state_service.py
+
+    state
+    → 현재 진행 중인 대화 상태 저장
+
+    reset_state()
+    → 작업 완료 후 State 초기화
+
+    extract_order_id()
+    → "10002번" 같은 후속 입력에서 주문번호 추출
+
+-----------------------------------------------
+
+services/orchestrator.py
+: 사용자 요청을 어떤 순서와 조건으로 처리할지 결정 및 여러 기능을 연결하는 파일
+
+    handle_pending_state()
+    → 이전 대화에서 처리 중이던 작업이 있는지 확인
+    → 사용자의 후속 입력을 이전 State와 연결해서 처리
+    → 주문 선택이 완료되면 State 초기화
+
+    route_request()
+    → 전체 요청 처리 흐름을 제어
+    → 먼저 State를 확인하고, 없으면 LLM으로 질문을 분류
+    → 분류 결과에 따라 적절한 기능을 호출
+    → 필요한 경우 State를 저장하고 최종 응답을 반환
+
+
+[schemas]
+schemas/chat.py
+
+    UserRequest
+    → LLM이 사용자 질문을 분석한 결과의 데이터 모양
+    → intent, cs_category, sub_intent, order_id
+
+    ChatRequest
+    → Frontend가 /chat API로 보내는 데이터 모양
+    → message, customer_id
+
+    ChatResponse
+    → /chat API가 Frontend에게 돌려주는 데이터 모양
+    → route, response
+
+
+[data]
+data/sample_data.py
+
+    orders
+    → 실제 DB 연결 전 주문 조회 기능을 테스트하기 위한 임시 주문 데이터
+    → order_payment_service.py의 기능이 정상 동작하는지 검증하는 데 사용
+    → 향후 실제 DB가 연결되면 대체될 데이터
+
+-----------------------------------------------
+
+flow_test.py
+→ 실제 테스트를 실행하는 코드
+
+-----------------------------------------------
+[docs]
+
+    docs/order_confirmation_e2e.md
+    → 무엇을 테스트했고 어떤 결과가 나왔는지 설명하는 기록
