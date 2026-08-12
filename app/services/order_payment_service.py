@@ -341,15 +341,21 @@ def cancel_order(
         }
 
     # -----------------------------------------------------
-    # 3. Action 직전 상태 재확인
+    # 3. Action 직전 주문 취소 가능 여부 재확인
 
-    if order["order_status"] != "order_completed":
+    cancel_result = judge_order_cancel(
+        order_status=order["order_status"],
+        delivery_status=order["delivery_status"],
+    )
+
+    if cancel_result["cancel_judgment"] != "cancelable":
         return {
             "result_type": "action_failed",
-            "reason": "invalid_order_status",
+            "reason": cancel_result["reason"],
             "order_id": order_id,
         }
 
+    # 결제 상태도 Action 직전에 다시 확인
     if payment["payment_status"] != "payment_completed":
         return {
             "result_type": "action_failed",

@@ -98,3 +98,47 @@ def test_cancel_action_fails_for_invalid_order():
 
     assert result["result_type"] == "action_failed"
     assert result["reason"] == "order_not_found"
+
+def test_cancel_order_rechecks_delivery_status_before_action():
+
+    test_orders = deepcopy(orders)
+    test_payments = deepcopy(payments)
+    test_refunds = deepcopy(refunds)
+
+    # 최초 취소 가능 여부 확인 이후
+    # 실제 Action 전에 배송이 시작됐다고 가정
+    order = next(
+        order
+        for order in test_orders
+        if order["order_id"] == 10001
+    )
+
+    order["delivery_status"] = "in_transit"
+
+    result = cancel_order(
+        orders=test_orders,
+        payments=test_payments,
+        refunds=test_refunds,
+        customer_id=1,
+        order_id=10001,
+    )
+
+    assert result["result_type"] == "action_failed"
+    assert result["reason"] == "in_transit"
+
+    # Action이 차단되었으므로 주문/결제 상태가 변경되면 안 됨
+    assert order["order_status"] == "order_completed"
+
+    payment = next(
+        payment
+        for payment in test_payments
+        if payment["order_id"] == 10001
+    )
+
+    assert payment["payment_status"] == "payment_completed"
+
+    # 환불 데이터도 새로 생성되면 안 됨
+    assert not any(
+    refund["order_id"] == 10001
+    for refund in test_refunds
+)

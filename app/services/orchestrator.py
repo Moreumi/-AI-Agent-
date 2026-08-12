@@ -1259,7 +1259,11 @@ def route_request(
     # 6) 배송지 변경
     # -----------------------------------------------------
 
-    if request.sub_intent == "delivery_address_change":
+    if (
+    request.intent == "cs"
+    and request.cs_category == "order_payment"
+    and request.sub_intent == "delivery_address_change"
+    ):
 
         result = check_delivery_address_change_eligibility(
             orders=orders,
@@ -1288,7 +1292,7 @@ def route_request(
 
         return {
             "route": "delivery_address_change",
-            "request": request,
+            "request": request.model_dump(),
             "result": result,
             "response": response,
         }
@@ -1297,7 +1301,11 @@ def route_request(
     # 7) 결제수단 변경
     # =====================================================
 
-    if request.sub_intent == "payment_method_change":
+    if (
+    request.intent == "cs"
+    and request.cs_category == "order_payment"
+    and request.sub_intent == "payment_method_change"
+    ):
 
         result = judge_payment_method_change()
 
@@ -1305,7 +1313,7 @@ def route_request(
 
         return {
             "route": "payment_method_change",
-            "request": request,
+            "request": request.model_dump(),
             "result": result,
             "response": response,
         }

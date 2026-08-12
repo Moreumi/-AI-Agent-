@@ -112,20 +112,35 @@ Business Rule을 안내하는 Guidance Flow로 구현했습니다.
 → Order Cancel Policy
 → 취소 가능 여부 판단
 → 사용자 최종 승인
+→ Action 직전 Order Cancel Policy 재검증
+→ 결제 상태 재검증
 → 주문 / 결제 취소 Action
 → 결제 방식에 따른 Refund Flow
 → 최종 응답
 ```
 
-주문 취소처럼 실제 데이터를 변경하는 기능은 
+주문 취소처럼 실제 데이터를 변경하는 기능은
 Policy에서 취소 가능하다고 판단되더라도 바로 실행하지 않습니다.
 
 사용자의 명확한 최종 승인을 확인한 이후에만
-Write Action을 실행합니다.
+Write Action 실행 단계로 이동합니다.
 
-카드 결제는 취소 후 refund_processing 상태로 전환하고,
+또한 최초 Policy 판단과 사용자의 최종 승인 사이에
+실제 배송 상태가 변경될 수 있으므로,
+Action 실행 직전에 현재 주문 상태와 배송 상태를 기준으로
+Order Cancel Policy를 다시 적용합니다.
+
+예를 들어 최초 확인 시 배송 준비중이어서 취소 가능했더라도
+사용자 승인 전에 배송이 시작되었다면
+주문 취소 Action을 실행하지 않습니다.
+
+결제 상태 역시 Action 직전에 다시 확인하며,
+모든 재검증을 통과한 경우에만
+실제 주문 및 결제 상태를 변경합니다.
+
+카드 결제는 취소 후 `refund_processing` 상태로 전환하고,
 계좌이체는 환불계좌 정보를 추가로 입력받은 뒤
-refund_processing 상태로 전환합니다.
+`refund_processing` 상태로 전환합니다.
 
 ### 배송지 변경
 
@@ -282,25 +297,80 @@ Write Flow
 
 ```text
 app/
-├── data/          # 테스트용 서비스 데이터
-├── policies/      # Business Rule / Policy
-├── routers/       # FastAPI Endpoint
-├── schemas/       # Request / Response Schema
-├── services/      # Service, LLM, State, Orchestration
+├── data/
+│   └── sample_data.py
+│       # MVP 테스트용 주문 / 결제 / 환불 데이터
+│
+├── policies/
+│   ├── order_completion_policy.py
+│   ├── payment_completion_policy.py
+│   ├── order_payment_consistency_policy.py
+│   ├── order_cancel_policy.py
+│   ├── delivery_address_change_policy.py
+│   └── payment_method_change_policy.py
+│       # Business Rule 및 상태 판단
+│
+├── routers/
+│   ├── chat.py
+│   └── health.py
+│       # FastAPI Endpoint
+│
+├── schemas/
+│   └── chat.py
+│       # 사용자 요청 Structured Output / Schema
+│
+├── services/
+│   ├── llm_service.py
+│   ├── order_payment_service.py
+│   ├── response_service.py
+│   ├── state_service.py
+│   └── orchestrator.py
+│       # LLM, 데이터 조회, State, Response, 전체 Orchestration
+│
 └── main.py
+    # FastAPI Application
 
 docs/
-├── policies/                      # Policy 정의 문서
+├── architecture.md
+│   # 현재 Chatbot Architecture
+│
+├── architecture_evolution.md
+│   # 주요 구조 변경과 설계 결정 기록
+│
 ├── order_confirmation_e2e.md
 ├── payment_confirmation_e2e.md
-└── output_response_design.md
+├── output_response_design.md
+│
+└── policies/
+    ├── order_completion_policy_v1.md
+    ├── payment_completion_policy_v1.md
+    ├── order_payment_consistency_policy_v1.md
+    ├── order_cancel_policy_v1.md
+    ├── delivery_address_change_policy_v1.md
+    └── payment_method_change_policy_v1.md
 
 tests/
-├── test_order_confirmation_flow.py
-├── test_payment_confirmation_flow.py
-└── test_order_payment_consistency.py
+├── test_*_policy.py
+│   # Business Policy 단위 테스트
+│
+├── test_*_service.py
+│   # Service 조회 / 처리 테스트
+│
+├── test_*_state.py
+│   # Multi-turn State 테스트
+│
+├── test_*_action.py
+│   # Write Action 및 Action 직전 재검증 테스트
+│
+├── test_*_flow.py
+│   # Routing / Multi-turn Flow 테스트
+│
+└── test_*_e2e.py
+    # End-to-End 통합 테스트
 ```
 
+기능별 파일을 단순히 나열하는 것보다
+각 Layer와 테스트의 책임이 드러나도록 구조를 관리합니다.
 ---
 
 ## 7. Tech Stack
@@ -366,6 +436,7 @@ python -m pytest -v
 - 사용자 승인 / 거절 / 불명확 응답 처리
 - 카드 주문 취소 Action
 - 계좌이체 주문 취소 및 환불계좌 수집
+- 주문 취소 Action 직전 주문 / 배송 상태 재검증
 - 주문 취소 Multi-turn Flow
 - FastAPI Swagger 기반 주문 취소 End-to-End Flow
 
@@ -383,7 +454,7 @@ python -m pytest -v
 - 결제수단 변경 안내 후 State 미생성 확인
 - 결제수단 변경 안내 종료 후 별도 주문 취소 요청이 기존 `order_cancel` Flow로 진입하는지 검증
 
-현재 전체 테스트 58개가 통과합니다.
+현재 전체 테스트 59개가 통과합니다.
 
 ---
 
@@ -402,6 +473,9 @@ python -m pytest -v
 
 - `docs/policies/delivery_address_change_policy_v1.md`
   - 배송지 변경 가능 조건 및 Write Action 실행 원칙
+
+- `docs/policies/order_cancel_policy_v1.md`
+  - 주문 취소 가능 조건, 사용자 승인 및 Action 직전 재검증 원칙
 
 - `docs/order_confirmation_e2e.md`
   - 주문 완료 확인 End-to-End 처리 흐름

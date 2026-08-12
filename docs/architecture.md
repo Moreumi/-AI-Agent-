@@ -563,13 +563,20 @@ Orchestrator
 필요 정보 확인
 ```
 
-정보가 충분한 경우:
+데이터 조회가 필요한 경우:
 
 ```text
 Service
 → Policy
 → 필요한 추가 검증
 → Response
+```
+
+Policy 안내만 필요한 경우:
+```text
+Policy
+→ Guidance Response
+→ Flow 종료
 ```
 
 정보가 부족한 경우:
@@ -656,7 +663,7 @@ CS
        └─ 배송지 변경 Action
 ```
 
-현재 전체 자동 테스트 58개가 통과한다.
+현재 전체 자동 테스트 59개가 통과한다.
 
 배송지 변경 Flow는 FastAPI Swagger를 통해
 Multi-turn End-to-End 동작을 추가로 검증했다.
@@ -714,9 +721,22 @@ Write Action
 사용자와의 Multi-turn 대화가 진행되는 동안
 실제 데이터 상태가 변경될 수 있다.
 
-따라서 배송지 변경처럼
-현재 상태에 따라 실행 가능 여부가 달라지는 Action은
-실제 실행 직전에 상태를 다시 확인한다.
+따라서 주문 취소와 배송지 변경처럼
+현재 상태에 따라 실행 가능 여부가 달라지는 Write Action은
+실제 실행 직전에 Policy를 다시 적용한다.
+
+예:
+
+주문 취소
+→ 최초 delivery_status = preparing_shipment
+→ cancelable
+→ 사용자 승인 대기
+→ 그 사이 delivery_status = in_transit
+→ Action 직전 Order Cancel Policy 재검증
+→ 취소 Action 차단
+
+배송지 변경 역시 동일하게
+Action 직전에 주문 상태와 배송 상태를 다시 확인한다.
 
 ### 기능의 성격에 따라 필요한 Component만 사용한다
 

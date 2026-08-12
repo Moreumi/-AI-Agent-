@@ -262,7 +262,65 @@ LLM의 추측만으로 주문 취소 Action을 실행하지 않는다.
 
 ## 7. 주문 취소 Action
 
-사용자의 최종 승인이 확인되면 주문 취소를 실행한다.
+사용자의 최종 승인이 확인되더라도
+최초 Policy 판단 결과만으로 주문 취소 Action을 실행하지 않는다.
+
+최초 주문 취소 가능 여부를 판단한 이후
+사용자의 최종 승인을 받기까지 시간이 발생할 수 있으며,
+그 사이 실제 주문의 배송 상태가 변경될 수 있다.
+
+예:
+
+```text
+최초 확인
+
+order_status = order_completed
+delivery_status = preparing_shipment
+
+→ cancelable
+
+↓
+
+사용자 최종 승인 대기
+
+↓
+
+배송 시작
+
+delivery_status = in_transit
+
+↓
+
+사용자 "예"
+```
+
+이 경우 최초 `cancelable` 결과를 그대로 사용하면
+이미 배송이 시작된 주문을 취소하는 문제가 발생할 수 있다.
+
+따라서 실제 주문 취소 Action 직전에
+현재 `order_status`와 `delivery_status`를 기준으로
+Order Cancel Policy를 다시 적용한다.
+
+```text
+최초 Policy 판단
+→ 사용자 최종 승인
+→ Action 직전 Order Cancel Policy 재검증
+→ 취소 가능 상태인 경우에만 Write Action 실행
+```
+
+Action 직전 재검증 결과가 더 이상 `cancelable`이 아니라면
+사용자가 주문 취소를 승인했더라도
+주문 및 결제 데이터를 변경하지 않는다.
+
+또한 결제 상태도 Action 직전에 다시 확인한다.
+
+```text
+payment_status = payment_completed
+```
+
+인 경우에만 취소 처리를 계속 진행한다.
+
+모든 재검증을 통과하면 주문 취소 Action을 실행한다.
 
 주문 취소 성공 시:
 
@@ -281,6 +339,45 @@ payment_completed
 ```
 
 주문만 취소하고 결제를 완료 상태로 남겨두지 않는다.
+
+주문 및 결제 취소 이후에는
+결제 방식에 따라 Refund Flow로 분기한다.
+
+```text
+payment_method 확인
+
+├─ card
+│   → refund_processing
+│
+└─ cash
+    → refund_account_required
+    → 환불계좌 정보 수집
+    → refund_processing
+```
+
+즉 주문 취소 Action의 전체 실행 원칙은 다음과 같다.
+
+```text
+주문 취소 가능 여부 최초 판단
+↓
+사용자 최종 승인
+↓
+Action 직전 주문 / 배송 상태 재검증
+↓
+Action 직전 결제 상태 재검증
+↓
+재검증 통과
+↓
+주문 취소
+↓
+결제 취소
+↓
+Refund Flow
+```
+
+최초 Policy 판단과 사용자 승인이 모두 완료되었더라도
+Action 직전 현재 상태가 취소 가능한 조건을 만족하지 않으면
+Write Action을 실행하지 않는다.
 
 ---
 

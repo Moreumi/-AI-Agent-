@@ -39,7 +39,9 @@
 개별 기능을 직접 호출하는 구조가 아니라  
 `Orchestrator`가 전체 처리 순서를 관리하도록 구성했다.
 
-또한 주문번호가 부족한 경우에는 State에 현재 처리 중인 기능과 후보 주문을 저장하고, 다음 사용자 입력에서 이어서 처리하도록 했다.
+또한 주문번호가 부족한 경우에는
+State에 현재 처리 중인 기능과 후보 주문을 저장하고,
+다음 사용자 입력에서 이어서 처리하도록 했다.
 
 ### 변경된 구조
 
@@ -64,7 +66,8 @@
 ### 결과
 
 주문 완료 확인과 결제 완료 확인 기능이  
-단일 함수 수준이 아니라 멀티턴을 포함한 End-to-End 챗봇 Flow로 동작하게 되었다.
+단일 함수 수준이 아니라 멀티턴을 포함한
+End-to-End 챗봇 Flow로 동작하게 되었다.
 
 ---
 
@@ -95,12 +98,14 @@ order_status = order_completed
 라는 값을 보고 실제로 "주문 완료"라고 판단하는 것은  
 쇼핑몰의 Business Rule에 해당한다.
 
-이 판단까지 LLM에게 맡기면 동일한 상태에서도 판단이 달라질 가능성이 있고,  
+이 판단까지 LLM에게 맡기면
+동일한 상태에서도 판단이 달라질 가능성이 있고,
 쇼핑몰 정책과 LLM의 일반 지식이 섞일 수 있다.
 
 ### 결정
 
-주문·결제 상태의 업무적 판단을 담당하는 `Policy Layer`를 별도로 분리했다.
+주문·결제 상태의 업무적 판단을 담당하는
+`Policy Layer`를 별도로 분리했다.
 
 ```text
 order_status
@@ -113,7 +118,8 @@ payment_status
 ```
 
 LLM은 상태를 판단하지 않고,  
-Policy에서 이미 확정된 결과를 고객에게 자연스럽게 설명하는 역할만 담당하도록 했다.
+Policy에서 이미 확정된 결과를 고객에게
+자연스럽게 설명하는 역할만 담당하도록 했다.
 
 ### 변경된 구조
 
@@ -139,7 +145,8 @@ LLM
 → 확정된 결과 표현
 ```
 
-이를 통해 쇼핑몰의 Business Rule과 자연어 생성 책임을 분리할 수 있게 되었다.
+이를 통해 쇼핑몰의 Business Rule과
+자연어 생성 책임을 분리할 수 있게 되었다.
 
 ---
 
@@ -224,13 +231,15 @@ Service 조회
 최종 고객 응답은 하나의 방식으로 생성했다.
 
 따라서 단순한 주문·결제 조회 결과와  
-정책이나 예외 상황에 대한 설명이 동일한 응답 방식으로 처리될 수 있었다.
+정책이나 예외 상황에 대한 설명이
+동일한 응답 방식으로 처리될 수 있었다.
 
 ### 문제
 
 응답의 목적에 따라 적합한 표현 방식이 달랐다.
 
-예를 들어 주문 완료 여부처럼 객관적인 정보를 확인하는 질문은
+예를 들어 주문 완료 여부처럼
+객관적인 정보를 확인하는 질문은
 
 ```text
 주문 상태
@@ -245,7 +254,8 @@ Service 조회
 
 ### 결정
 
-Orchestrator가 상황에 따라 `response_mode`를 명시적으로 선택하도록 했다.
+Orchestrator가 상황에 따라
+`response_mode`를 명시적으로 선택하도록 했다.
 
 ```text
 fact_summary
@@ -275,7 +285,9 @@ Service / Data
 객관적인 조회 결과와 설명이 필요한 상황을  
 서로 다른 응답 전략으로 처리할 수 있게 되었다.
 
-또한 **어떤 응답 방식을 사용할지 LLM이 임의로 결정하지 않고 Orchestrator가 결정**하도록 하여, Agent의 처리 흐름을 명시적으로 제어할 수 있게 되었다.
+또한 **어떤 응답 방식을 사용할지 LLM이 임의로 결정하지 않고
+Orchestrator가 결정**하도록 하여,
+Agent의 처리 흐름을 명시적으로 제어할 수 있게 되었다.
 
 ---
 
@@ -284,7 +296,8 @@ Service / Data
 ### 초기 구조
 
 기존 주문 완료 확인과 결제 완료 확인 기능은
-데이터를 조회하고 판단한 뒤 사용자에게 결과를 제공하는 Read 중심 구조였다.
+데이터를 조회하고 판단한 뒤
+사용자에게 결과를 제공하는 Read 중심 구조였다.
 
 ```text
 Read
@@ -567,7 +580,7 @@ pending_delivery_address
 ```
 
 와 같은 전용 State를 추가할 수도 있었지만,
-향후 결제수단 변경 등 다른 Write Flow에서도
+향후 다른 정보 수집형 Write Flow에서도
 유사한 임시 데이터가 필요할 수 있다.
 
 ---
@@ -655,6 +668,22 @@ delivery_status = in_transit
 현재 상태가 더 이상 변경 가능한 조건이 아니라면
 사용자가 승인했더라도 Write Action을 실행하지 않는다.
 
+배송지 변경에서 이 문제를 확인한 이후,
+동일하게 배송 상태에 따라 실행 가능 여부가 달라지는
+주문 취소 Action에도 같은 원칙을 적용했다.
+
+```text
+주문 취소 가능 여부 최초 판단
+→ 사용자 승인
+→ Action 직전 Order Cancel Policy 재검증
+→ 결제 상태 재검증
+→ Write Action
+```
+
+따라서 현재 상태 의존적인 Write Flow에서는
+최초 Policy 결과를 Action 시점까지 그대로 신뢰하지 않고,
+실제 Action 직전의 최신 상태를 다시 기준으로 판단한다.
+
 ---
 
 ### 변경된 구조
@@ -680,7 +709,7 @@ Policy 판단
     ↓
 
 Action 예정 데이터
-State에 임시 저장
+필요 시 State에 임시 저장
 ↓
 사용자 최종 승인
 
@@ -739,8 +768,7 @@ End-to-End Flow로 동작하게 되었다.
 동일한 State 및 Orchestration 패턴을 재사용할 수 있게 되었다.
 
 배송지 변경 Flow는 단위 및 통합 테스트와
-FastAPI Swagger 기반 Multi-turn End-to-End 테스트를 통해 검증했으며,
-현재 전체 자동 테스트 55개가 통과한다.
+FastAPI Swagger 기반 Multi-turn End-to-End 테스트를 통해 검증했다.
 
 ---
 
@@ -775,7 +803,7 @@ Pending State 확인
     │   ↓
     │   Policy Layer
     │   ↓
-    │   Order-Payment Consistency Check
+    │   필요한 경우 Consistency Check
     │   ↓
     │   Response Mode Selection
     │   ├─ fact_summary
@@ -784,6 +812,17 @@ Pending State 확인
     │   Output Prompt + LLM
     │   ↓
     │   Final Response
+    │
+    ├─ Guidance Flow
+    │   └─ 결제수단 변경
+    │       ↓
+    │       Payment Method Change Policy
+    │       ↓
+    │       직접 변경 불가 판단
+    │       ↓
+    │       취소 후 재주문 안내
+    │       ↓
+    │       State 생성 없이 Flow 종료
     │
     └─ Write Flow
         │
@@ -795,16 +834,24 @@ Pending State 확인
         │   ↓
         │   사용자 최종 승인
         │   ↓
+        │   Action 직전 Policy 재검증
+        │   ↓
+        │   결제 상태 재검증
+        │   ↓
         │   Write Action
         │   ├─ Order Cancel
         │   └─ Payment Cancel
         │       ↓
         │       Refund Flow
-        │       ├─ card → refund_processing
+        │       ├─ card
+        │       │   → refund_processing
+        │       │
         │       └─ cash
         │           → refund_account_required
         │           → 환불계좌 입력
         │           → refund_processing
+        │   ↓
+        │   State 초기화
         │   ↓
         │   Final Response
         │
@@ -822,7 +869,7 @@ Pending State 확인
             ↓
             사용자 최종 승인
             ↓
-            Action 직전 상태 재검증
+            Action 직전 Policy 재검증
             ↓
             Delivery Address Change Action
             ↓
