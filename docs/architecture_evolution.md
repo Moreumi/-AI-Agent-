@@ -279,6 +279,19 @@ Service / Data
 
 ---
 
+## 5. 사용자 승인 기반 Write Action 구조 추가
+
+### 초기 구조
+
+기존 주문 완료 확인과 결제 완료 확인 기능은
+데이터를 조회하고 판단한 뒤 사용자에게 결과를 제공하는 Read 중심 구조였다.
+
+```text
+Read
+→ Judge
+→ Respond
+
+---
 ## Current Architecture
 
 현재까지의 구조는 다음과 같다.
@@ -288,24 +301,58 @@ User
 ↓
 FastAPI Router
 ↓
-Intent Classification
-↓
 Orchestrator
 ↓
-Service / Data
-↓
-Policy Layer
-↓
-Order-Payment Consistency Check
-↓
-Response Mode Selection
-├─ fact_summary
-└─ narrative_guidance
-↓
-Output Prompt + LLM
-↓
-Final Response
-```
-
-앞으로 Architecture 수준의 변경이 발생하면  
-동일하게 **초기 구조 → 문제 → 결정 → 변경된 구조 → 결과** 기준으로 이 문서에 추가한다.
+Pending State 확인
+│
+├─ 진행 중인 State 존재
+│   → 기존 Multi-turn Flow 계속 처리
+│
+└─ 진행 중인 State 없음
+    ↓
+    Intent Classification
+    ↓
+    Routing
+    │
+    ├─ Read Flow
+    │   ├─ 주문 완료 확인
+    │   └─ 결제 완료 확인
+    │
+    │   ↓
+    │   Service / Data
+    │   ↓
+    │   Policy Layer
+    │   ↓
+    │   Order-Payment Consistency Check
+    │   ↓
+    │   Response Mode Selection
+    │   ├─ fact_summary
+    │   └─ narrative_guidance
+    │   ↓
+    │   Output Prompt + LLM
+    │   ↓
+    │   Final Response
+    │
+    └─ Write Flow
+        └─ 주문 취소
+            ↓
+            Service / Data 조회
+            ↓
+            Order Cancel Policy
+            ↓
+            사용자 최종 승인
+            ↓
+            State
+            ↓
+            Write Action
+            ├─ Order Cancel
+            └─ Payment Cancel
+                    ↓
+                Refund Flow
+                ├─ card → refund_processing
+                └─ cash
+                    → refund_account_required
+                    → 환불계좌 입력
+                    → refund_processing
+            ↓
+            Final Response

@@ -11,34 +11,62 @@
 전체 흐름을 관리하는 것을 목표로 한다.
 
 ---
-
 ## 2. 전체 처리 흐름
 
-현재 구현된 CS Flow는 다음과 같다.
+현재 구현된 CS Flow는 크게 Read Flow와 Write Flow로 구분된다.
 
 ```text
 User
 ↓
 FastAPI Router
 ↓
-Intent Classification
-↓
 Orchestrator
 ↓
-Service / Data
-↓
-Policy Layer
-↓
-Order-Payment Consistency Check
-↓
-Response Mode Selection
-├─ fact_summary
-└─ narrative_guidance
-↓
-Output Prompt + LLM
-↓
-Final Response
-```
+Pending State 확인
+│
+├─ 진행 중인 State 존재
+│   → 기존 Multi-turn Flow 계속 처리
+│
+└─ 진행 중인 State 없음
+    ↓
+    Intent Classification
+    ↓
+    Routing
+    │
+    ├─ Read Flow
+    │   ├─ order_confirmation
+    │   └─ payment_confirmation
+    │
+    │   ↓
+    │   Service / Data
+    │   ↓
+    │   Policy Layer
+    │   ↓
+    │   Order-Payment Consistency Check
+    │   ↓
+    │   Response Generation
+    │
+    └─ Write Flow
+        └─ order_cancel
+            ↓
+            주문 조회
+            ↓
+            Order Cancel Policy
+            ↓
+            사용자 최종 승인
+            ↓
+            Write Action
+            ├─ 주문 취소
+            └─ 결제 취소
+                    ↓
+                Refund Flow
+                ├─ card → refund_processing
+                └─ cash
+                    → refund_account_required
+                    → 환불계좌 입력
+                    → refund_processing
+            ↓
+            Final Response
 
 ---
 
@@ -64,6 +92,7 @@ Router는 비즈니스 판단을 담당하지 않고,
 ```text
 order_confirmation
 payment_confirmation
+order_cancel
 ```
 
 분류 결과는 Orchestrator가 다음 처리 경로를 결정하는 데 사용한다.
@@ -84,6 +113,9 @@ payment_confirmation
 - Consistency 결과 확인
 - Response Mode 결정
 - 최종 응답 생성 Component 호출
+- Write Action 실행 전 사용자 최종 승인 확인
+- 주문 취소 이후 결제 방식에 따른 Refund Flow 분기
+- 진행 중인 Action에 따라 Multi-turn State 계속 처리
 
 즉 개별 기능을 직접 수행하기보다
 **각 Component를 어떤 순서로 호출할지 결정하는 역할**을 담당한다.
@@ -125,15 +157,37 @@ Agent
 
 기존 State를 확인하여
 order_confirmation Flow 계속 처리
+
+```
+
+주문 취소 Flow에서는 Action 실행 전 사용자 승인을 기다리거나,
+계좌이체 환불을 위한 추가 정보를 수집하는 데에도 State를 사용한다.
+
+현재 주요 State 값은 다음과 같다.
+
+```text
+pending_action
+→ 현재 이어서 처리해야 할 작업
+
+candidate_orders
+→ 사용자가 선택할 수 있는 주문 목록
+
+selected_order_id
+→ 현재 처리 중인 주문번호
+
 ```
 
 현재 MVP에서는 Python Dictionary 기반 State를 사용한다.
+현재 State는 서버 메모리에 저장되므로
+서버가 재시작되면 State가 초기화된다.
+향후 실제 서비스에서는 사용자별 Session 또는 영속 State 저장 방식이 필요하다.
 
 ---
 
 ### Service / Data
 
-고객의 실제 주문·결제 데이터를 조회하는 역할을 담당한다.
+고객의 주문·결제·환불 데이터를 조회하고,
+확정된 Action에 따라 상태를 변경하는 역할을 담당한다.
 
 예:
 
@@ -147,37 +201,22 @@ payment_status
 payment_method
 payment_amount
 payment_date
-```
+
+현재 주요 Write Action은 다음과 같다.
+
+cancel_order()
+→ 주문 상태 변경
+→ 결제 상태 변경
+→ 환불 상태 생성
+
+register_refund_account()
+→ 환불계좌 정보 저장
+→ refund_status를 refund_processing으로 변경
 
 Service는 데이터를 조회하고
 Policy 판단에 필요한 결과를 반환한다.
 
----
-
-### Policy Layer
-
-조회된 상태값의 업무적 의미를 판단한다.
-
-예:
-
-```text
-order_status = order_completed
-↓
-Order Completion Policy
-↓
-judgment = completed
-```
-
-```text
-payment_status = payment_completed
-↓
-Payment Completion Policy
-↓
-judgment = completed
-```
-
-Business Rule은 LLM이 아니라
-Python 코드에서 명시적으로 관리한다.
+Write Action은 Orchestrator가 사용자의 명확한 승인을 확인한 이후에만 호출한다.
 
 ---
 
@@ -322,23 +361,19 @@ State 저장
 
 ```text
 CS
-├─ 주문/결제
-│  ├─ 주문 완료 확인
-│  └─ 결제 완료 확인
-```
-
-지원되는 주요 처리 방식:
-
-- Intent Classification
-- Routing
-- 주문/결제 데이터 조회
-- 멀티턴 주문 선택
-- State 관리
-- Policy 판단
-- 주문-결제 Consistency 검증
-- Response Mode 선택
-- LLM 기반 최종 응답 생성
-- End-to-End 테스트
+└─ 주문/결제
+   ├─ 주문 완료 확인
+   ├─ 결제 완료 확인
+   └─ 주문 취소
+       ├─ 주문 취소 가능 여부 판단
+       ├─ 사용자 최종 승인
+       ├─ 주문/결제 취소 Action
+       └─ 환불 처리
+           ├─ 카드
+           │   → refund_processing
+           └─ 계좌이체
+               → 환불계좌 수집
+               → refund_processing
 
 ---
 

@@ -1,5 +1,6 @@
 from app.policies.order_completion_policy import judge_order_completion
 from app.policies.payment_completion_policy import judge_payment_completion
+from app.policies.order_cancel_policy import judge_order_cancel
 
 from app.policies.order_payment_consistency_policy import (
     judge_order_payment_consistency,
@@ -82,6 +83,319 @@ def check_order_completion(
 
 
 # =========================================================
+# 주문 취소 가능 여부 확인
+# =========================================================
+
+def check_order_cancel_eligibility(
+    orders: list[dict],
+    customer_id: int,
+    order_id: int | None = None,
+) -> dict:
+    """
+    고객의 주문을 조회한 뒤
+    Order Cancel Policy를 사용하여 주문 취소 가능 여부를 판단한다.
+
+    실제 주문 취소 Action은 수행하지 않는다.
+    """
+
+    # -----------------------------------------------------
+    # 1. 해당 고객의 주문만 조회
+
+    customer_orders = [
+        order
+        for order in orders
+        if order["customer_id"] == customer_id
+    ]
+
+    # 고객의 주문이 없는 경우
+    if not customer_orders:
+        return {
+            "result_type": "not_found",
+        }
+
+    # -----------------------------------------------------
+    # 2. 사용자가 주문번호를 직접 입력한 경우
+
+    if order_id is not None:
+        selected_order = next(
+            (
+                order
+                for order in customer_orders
+                if order["order_id"] == order_id
+            ),
+            None,
+        )
+
+        # 해당 고객의 주문이 아닌 경우
+        if selected_order is None:
+            return {
+                "result_type": "not_found",
+            }
+
+    # -----------------------------------------------------
+    # 3. 주문번호가 없는 경우
+
+    else:
+        # 주문이 여러 건이면 사용자가 선택해야 함
+        if len(customer_orders) > 1:
+            return {
+                "result_type": "need_order_selection",
+                "candidate_orders": [
+                    {
+                        "order_id": order["order_id"],
+                        "order_date": order["order_date"],
+                        "total_price": order["total_price"],
+                    }
+                    for order in customer_orders
+                ],
+            }
+
+        # 주문이 한 건이면 자동 선택
+        selected_order = customer_orders[0]
+
+    # -----------------------------------------------------
+    # 4. 주문 취소 가능 여부 Policy 판단
+
+    cancel_result = judge_order_cancel(
+        order_status=selected_order["order_status"],
+        delivery_status=selected_order["delivery_status"],
+    )
+
+    # -----------------------------------------------------
+    # 5. 조회 결과 + Policy 결과 반환
+
+    return {
+        "result_type": "success",
+        "order_id": selected_order["order_id"],
+        "order_status": selected_order["order_status"],
+        "delivery_status": selected_order["delivery_status"],
+        "order_date": selected_order["order_date"],
+        "total_price": selected_order["total_price"],
+        "cancel_judgment": cancel_result["cancel_judgment"],
+        "reason": cancel_result["reason"],
+    }
+
+
+# =========================================================
+# 주문 취소 Action
+# =========================================================
+
+def cancel_order(
+    orders: list[dict],
+    payments: list[dict],
+    refunds: list[dict],
+    customer_id: int,
+    order_id: int,
+) -> dict:
+    """
+    사용자의 최종 승인이 확인된 이후
+    실제 주문 및 결제 상태를 취소 처리한다.
+
+    이 함수는 Write Action이므로
+    Orchestrator가 사용자 승인을 확인한 이후에만 호출해야 한다.
+    """
+
+    # -----------------------------------------------------
+    # 1. 고객의 주문 확인
+
+    order = next(
+        (
+            order
+            for order in orders
+            if order["customer_id"] == customer_id
+            and order["order_id"] == order_id
+        ),
+        None,
+    )
+
+    if order is None:
+        return {
+            "result_type": "action_failed",
+            "reason": "order_not_found",
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 2. 결제 정보 확인
+
+    payment = next(
+        (
+            payment
+            for payment in payments
+            if payment["order_id"] == order_id
+        ),
+        None,
+    )
+
+    if payment is None:
+        return {
+            "result_type": "action_failed",
+            "reason": "payment_not_found",
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 3. Action 직전 상태 재확인
+
+    if order["order_status"] != "order_completed":
+        return {
+            "result_type": "action_failed",
+            "reason": "invalid_order_status",
+            "order_id": order_id,
+        }
+
+    if payment["payment_status"] != "payment_completed":
+        return {
+            "result_type": "action_failed",
+            "reason": "invalid_payment_status",
+            "order_id": order_id,
+        }
+
+    payment_method = payment["payment_method"]
+
+    if payment_method not in {"card", "cash"}:
+        return {
+            "result_type": "action_failed",
+            "reason": "unsupported_payment_method",
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 4. 주문 및 결제 취소
+
+    order["order_status"] = "order_canceled"
+    payment["payment_status"] = "payment_canceled"
+
+    # -----------------------------------------------------
+    # 5. Refund ID 생성
+
+    refund_id = (
+        max(
+            refund["refund_id"]
+            for refund in refunds
+        )
+        + 1
+        if refunds
+        else 70001
+    )
+
+    # -----------------------------------------------------
+    # 6. 결제 방식에 따른 환불 상태 결정
+
+    if payment_method == "card":
+        refund_status = "refund_processing"
+        result_type = "success"
+
+    else:
+        refund_status = "refund_account_required"
+        result_type = "refund_account_required"
+
+    # -----------------------------------------------------
+    # 7. 환불 데이터 생성
+
+    refund = {
+        "refund_id": refund_id,
+        "payment_id": payment["payment_id"],
+        "order_id": order_id,
+        "refund_amount": payment["payment_amount"],
+        "refund_status": refund_status,
+        "bank_name": None,
+        "account_number": None,
+        "account_holder": None,
+    }
+
+    refunds.append(refund)
+
+    # -----------------------------------------------------
+    # 8. Action 결과 반환
+
+    return {
+        "result_type": result_type,
+        "order_id": order_id,
+        "order_status": order["order_status"],
+        "payment_id": payment["payment_id"],
+        "payment_method": payment_method,
+        "payment_status": payment["payment_status"],
+        "refund_id": refund_id,
+        "refund_status": refund_status,
+    }
+
+# =========================================================
+# 환불계좌 등록 Action
+# =========================================================
+
+def register_refund_account(
+    refunds: list[dict],
+    order_id: int,
+    bank_name: str,
+    account_number: str,
+    account_holder: str,
+) -> dict:
+    """
+    계좌이체 주문 취소 후 환불계좌를 등록한다.
+
+    refund_account_required 상태인 환불 건에만
+    계좌정보를 저장하고 refund_processing으로 변경한다.
+    """
+
+    # -----------------------------------------------------
+    # 1. 해당 주문의 환불 데이터 확인
+    # -----------------------------------------------------
+
+    refund = next(
+        (
+            refund
+            for refund in refunds
+            if refund["order_id"] == order_id
+        ),
+        None,
+    )
+
+    if refund is None:
+        return {
+            "result_type": "action_failed",
+            "reason": "refund_not_found",
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 2. 현재 환불 상태 재확인
+    # -----------------------------------------------------
+
+    if refund["refund_status"] != "refund_account_required":
+        return {
+            "result_type": "action_failed",
+            "reason": "invalid_refund_status",
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 3. 환불계좌 정보 저장
+    # -----------------------------------------------------
+
+    refund["bank_name"] = bank_name
+    refund["account_number"] = account_number
+    refund["account_holder"] = account_holder
+
+    # 계좌정보 등록 완료 → 환불 처리중
+    refund["refund_status"] = "refund_processing"
+
+    # -----------------------------------------------------
+    # 4. 결과 반환
+    # -----------------------------------------------------
+
+    return {
+        "result_type": "success",
+        "order_id": order_id,
+        "refund_id": refund["refund_id"],
+        "refund_status": refund["refund_status"],
+        "bank_name": refund["bank_name"],
+        "account_number": refund["account_number"],
+        "account_holder": refund["account_holder"],
+    }
+
+
+# =========================================================
 # 주문 확인 결과 → 사용자 응답 생성
 # =========================================================
 
@@ -158,7 +472,6 @@ def check_payment_completion(
 
     # ---------------------------------------------------------
     # 사용자가 주문번호를 직접 입력한 경우
-    # ---------------------------------------------------------
     if order_id is not None:
 
         selected_order = next(
@@ -180,7 +493,6 @@ def check_payment_completion(
 
     # ---------------------------------------------------------
     # 주문번호가 없는 경우
-    # ---------------------------------------------------------
     else:
 
         # 고객의 주문 자체가 없는 경우
@@ -208,7 +520,6 @@ def check_payment_completion(
 
     # ---------------------------------------------------------
     # 선택된 주문의 결제 데이터 조회
-    # ---------------------------------------------------------
     payment = next(
         (
             payment
@@ -240,20 +551,19 @@ def check_payment_completion(
 # =========================================================
 # 결제 완료 확인 응답 생성
 # =========================================================
-
 def generate_payment_response(result: dict) -> str:
 
     result_type = result["result_type"]
 
     # ---------------------------------------------------------
     # 주문 또는 결제 정보를 찾지 못한 경우
-    # ---------------------------------------------------------
+   
     if result_type == "not_found":
         return "확인할 수 있는 주문 또는 결제 정보가 없습니다."
 
     # ---------------------------------------------------------
     # 주문이 여러 개라 사용자의 선택이 필요한 경우
-    # ---------------------------------------------------------
+    
     if result_type == "need_order_selection":
 
         candidate_orders = result["candidate_orders"]
@@ -275,7 +585,6 @@ def generate_payment_response(result: dict) -> str:
 
     # ---------------------------------------------------------
     # 결제 데이터 조회 성공
-    # ---------------------------------------------------------
     if result_type == "success":
 
         order_id = result["order_id"]
@@ -316,9 +625,8 @@ def check_order_payment_consistency(
     서로 일관된지 확인한다.
     """
 
-    # -----------------------------------------------------
+    
     # 1. 해당 고객의 주문 확인
-    # -----------------------------------------------------
 
     order = next(
         (
@@ -337,9 +645,7 @@ def check_order_payment_consistency(
             "order_id": order_id,
         }
 
-    # -----------------------------------------------------
     # 2. 해당 주문의 결제 정보 확인
-    # -----------------------------------------------------
 
     payment = next(
         (
@@ -358,9 +664,7 @@ def check_order_payment_consistency(
             "order_status": order["order_status"],
         }
 
-    # -----------------------------------------------------
     # 3. 주문-결제 상태 일관성 판정
-    # -----------------------------------------------------
 
     consistency_judgment = judge_order_payment_consistency(
         order_status=order["order_status"],

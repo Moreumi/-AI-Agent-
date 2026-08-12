@@ -4,7 +4,7 @@ from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.orchestrator import route_request
 from app.services.state_service import state
 
-from app.data.sample_data import orders, payments
+from app.data.sample_data import orders, payments, refunds
 
 
 # =========================================================
@@ -29,7 +29,8 @@ def chat(request: ChatRequest):
         customer_id=request.customer_id,
         orders=orders,
         state=state,
-        payments=payments
+        payments=payments,
+        refunds=refunds,
     )
 
     return ChatResponse(

@@ -3,7 +3,7 @@
 온라인 쇼핑몰에서 고객의 문의를 이해하고,  
 CS 응대와 상품 추천을 처리할 수 있는 AI Agent를 개발하는 프로젝트입니다.
 
-현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인**을 중심으로
+현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 주문 취소**를 중심으로
 사용자 입력부터 최종 응답까지 End-to-End 처리 흐름을 구현하고 있습니다.
 
 ---
@@ -84,7 +84,29 @@ CS 응대와 상품 추천을 처리할 수 있는 AI Agent를 개발하는 프�
 주문이 여러 건 존재하는 경우에는
 Agent가 임의로 주문을 선택하지 않고 사용자에게 주문번호를 추가로 확인합니다.
 
+### 주문 취소
+
+```text
+사용자 질문
+→ Intent Classification
+→ 주문 조회
+→ Order Cancel Policy
+→ 취소 가능 여부 판단
+→ 사용자 최종 승인
+→ 주문 / 결제 취소 Action
+→ 결제 방식에 따른 Refund Flow
+→ 최종 응답
 ---
+
+주문 취소처럼 실제 데이터를 변경하는 기능은 
+Policy에서 취소 가능하다고 판단되더라도 바로 실행하지 않습니다.
+
+사용자의 명확한 최종 승인을 확인한 이후에만
+Write Action을 실행합니다.
+
+카드 결제는 취소 후 refund_processing 상태로 전환하고,
+계좌이체는 환불계좌 정보를 추가로 입력받은 뒤
+refund_processing 상태로 전환합니다.
 
 ## 4. Current Architecture
 
@@ -271,6 +293,14 @@ python -m pytest -v
 - 결제 완료 확인 멀티턴 Flow
 - 주문 완료 + 결제 실패 상태의 Consistency Routing
 - 주문 실패 + 결제 완료 상태의 Consistency Routing
+- 주문 취소 가능 여부 Policy
+- 사용자 승인 / 거절 / 불명확 응답 처리
+- 카드 주문 취소 Action
+- 계좌이체 주문 취소 및 환불계좌 수집
+- 주문 취소 Multi-turn Flow
+- FastAPI Swagger 기반 주문 취소 End-to-End Flow
+
+현재 전체 테스트 28개가 통과합니다.
 
 ---
 
