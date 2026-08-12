@@ -9,6 +9,7 @@ state = {
     "pending_action": None,
     "candidate_orders": [],
     "selected_order_id": None,
+    "pending_data":{},
 }
 
 
@@ -20,6 +21,7 @@ def reset_state(state: dict) -> None:
     state["pending_action"] = None
     state["candidate_orders"] = []
     state["selected_order_id"] = None
+    state["pending_data"] = {}
 
 
 # =========================================================
@@ -122,3 +124,22 @@ def extract_refund_account(user_input: str) -> dict | None:
         "account_number": account_number,
         "account_holder": account_holder,
     }
+
+# =========================================================
+# 배송지 정보 추출
+# =========================================================
+
+def extract_delivery_address(user_input: str) -> str | None:
+    """
+    배송지 변경 과정에서 사용자가 입력한 새 주소를 추출한다.
+
+    현재 MVP에서는 주소 자체의 유효성을 외부 주소 API로 검증하지 않고,
+    공백이 아닌 문자열인지 여부만 확인한다.
+    """
+
+    address = user_input.strip()
+
+    if not address:
+        return None
+
+    return address

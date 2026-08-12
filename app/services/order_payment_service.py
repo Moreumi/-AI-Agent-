@@ -6,6 +6,10 @@ from app.policies.order_payment_consistency_policy import (
     judge_order_payment_consistency,
 )
 
+from app.policies.delivery_address_change_policy import (
+    judge_delivery_address_change,
+)
+
 # =========================================================
 # 주문 완료 상태 확인
 # =========================================================
@@ -173,6 +177,108 @@ def check_order_cancel_eligibility(
         "total_price": selected_order["total_price"],
         "cancel_judgment": cancel_result["cancel_judgment"],
         "reason": cancel_result["reason"],
+    }
+
+
+# =========================================================
+# 배송지 변경 가능 여부 확인
+# =========================================================
+
+def check_delivery_address_change_eligibility(
+    orders: list[dict],
+    customer_id: int,
+    order_id: int | None = None,
+) -> dict:
+    """
+    고객의 주문을 조회한 뒤
+    Delivery Address Change Policy를 사용하여
+    배송지 변경 가능 여부를 판단한다.
+
+    실제 배송지 변경 Action은 수행하지 않는다.
+    """
+
+    # -----------------------------------------------------
+    # 1. 해당 고객의 주문만 조회
+    # -----------------------------------------------------
+
+    customer_orders = [
+        order
+        for order in orders
+        if order["customer_id"] == customer_id
+    ]
+
+    if not customer_orders:
+        return {
+            "result_type": "not_found",
+        }
+
+    # -----------------------------------------------------
+    # 2. 주문번호가 직접 제공된 경우
+    # -----------------------------------------------------
+
+    if order_id is not None:
+        selected_order = next(
+            (
+                order
+                for order in customer_orders
+                if order["order_id"] == order_id
+            ),
+            None,
+        )
+
+        if selected_order is None:
+            return {
+                "result_type": "not_found",
+            }
+
+    # -----------------------------------------------------
+    # 3. 주문번호가 없는 경우
+    # -----------------------------------------------------
+
+    else:
+        # 여러 주문이 있으면 사용자가 선택해야 함
+        if len(customer_orders) > 1:
+            return {
+                "result_type": "need_order_selection",
+                "candidate_orders": [
+                    {
+                        "order_id": order["order_id"],
+                        "order_date": order["order_date"],
+                        "total_price": order["total_price"],
+                        "delivery_address": order["delivery_address"],
+                    }
+                    for order in customer_orders
+                ],
+            }
+
+        # 주문이 한 건이면 자동 선택
+        selected_order = customer_orders[0]
+
+    # -----------------------------------------------------
+    # 4. 배송지 변경 가능 여부 Policy 판단
+    # -----------------------------------------------------
+
+    address_change_result = judge_delivery_address_change(
+        order_status=selected_order["order_status"],
+        delivery_status=selected_order["delivery_status"],
+    )
+
+    # -----------------------------------------------------
+    # 5. 조회 결과 + Policy 결과 반환
+    # -----------------------------------------------------
+
+    return {
+        "result_type": "success",
+        "order_id": selected_order["order_id"],
+        "order_status": selected_order["order_status"],
+        "delivery_status": selected_order["delivery_status"],
+        "delivery_address": selected_order["delivery_address"],
+        "order_date": selected_order["order_date"],
+        "total_price": selected_order["total_price"],
+        "address_change_judgment": (
+            address_change_result["address_change_judgment"]
+        ),
+        "reason": address_change_result["reason"],
     }
 
 
@@ -394,6 +500,93 @@ def register_refund_account(
         "account_holder": refund["account_holder"],
     }
 
+# =========================================================
+# 배송지 변경 Action
+# =========================================================
+
+def change_delivery_address(
+    orders: list[dict],
+    customer_id: int,
+    order_id: int,
+    new_delivery_address: str,
+) -> dict:
+    """
+    사용자의 최종 승인이 확인된 이후
+    실제 주문의 배송지를 변경한다.
+
+    이 함수는 Write Action이므로
+    Orchestrator가 사용자 승인을 확인한 이후에만 호출해야 한다.
+    """
+
+    # -----------------------------------------------------
+    # 1. 변경할 주소 기본 검증
+
+    normalized_address = new_delivery_address.strip()
+
+    if not normalized_address:
+        return {
+            "result_type": "action_failed",
+            "reason": "invalid_delivery_address",
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 2. 해당 고객의 주문 확인
+
+    order = next(
+        (
+            order
+            for order in orders
+            if order["customer_id"] == customer_id
+            and order["order_id"] == order_id
+        ),
+        None,
+    )
+
+    if order is None:
+        return {
+            "result_type": "action_failed",
+            "reason": "order_not_found",
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 3. Action 직전 배송지 변경 가능 여부 재확인
+
+    address_change_result = judge_delivery_address_change(
+        order_status=order["order_status"],
+        delivery_status=order["delivery_status"],
+    )
+
+    if (
+        address_change_result["address_change_judgment"]
+        != "changeable"
+    ):
+        return {
+            "result_type": "action_failed",
+            "reason": address_change_result["reason"],
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 4. 기존 배송지 보관
+
+    previous_delivery_address = order["delivery_address"]
+
+    # -----------------------------------------------------
+    # 5. 실제 배송지 변경
+
+    order["delivery_address"] = normalized_address
+
+    # -----------------------------------------------------
+    # 6. Action 결과 반환
+
+    return {
+        "result_type": "success",
+        "order_id": order_id,
+        "previous_delivery_address": previous_delivery_address,
+        "new_delivery_address": order["delivery_address"],
+    }
 
 # =========================================================
 # 주문 확인 결과 → 사용자 응답 생성

@@ -3,7 +3,7 @@
 온라인 쇼핑몰에서 고객의 문의를 이해하고,  
 CS 응대와 상품 추천을 처리할 수 있는 AI Agent를 개발하는 프로젝트입니다.
 
-현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 주문 취소**를 중심으로
+현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 주문 취소 / 배송지 변경**을 중심으로
 사용자 입력부터 최종 응답까지 End-to-End 처리 흐름을 구현하고 있습니다.
 
 ---
@@ -107,31 +107,69 @@ Write Action을 실행합니다.
 계좌이체는 환불계좌 정보를 추가로 입력받은 뒤
 refund_processing 상태로 전환합니다.
 
-## 4. Current Architecture
+### 배송지 변경
 
 ```text
-User
- ↓
-FastAPI Router
- ↓
-Intent Classification
- ↓
-Orchestrator
- ↓
-Service / Data
- ↓
-Policy Layer
- ↓
-Order-Payment Consistency Check
- ↓
-Response Mode Selection
- ├─ fact_summary
- └─ narrative_guidance
- ↓
-Output Prompt + LLM
- ↓
-Final Response
+사용자 질문
+→ Intent Classification
+→ 주문 조회 / 선택
+→ Delivery Address Change Policy
+→ 새 배송지 수집
+→ State 임시 저장
+→ 사용자 최종 승인
+→ Action 직전 상태 재검증
+→ 배송지 변경 Action
+→ 최종 응답
 ```
+
+배송지 변경은 실제 주문 데이터를 수정하는 Write Action이므로
+변경 가능 여부가 확인되더라도 즉시 실행하지 않습니다.
+
+사용자가 입력한 새 배송지는 `pending_data`에 임시 저장하고,
+변경 전·후 배송지를 확인한 뒤 사용자의 최종 승인을 받습니다.
+
+또한 최초 판단 이후 배송이 시작되는 상황을 방지하기 위해
+실제 Action 실행 직전에 주문 상태와 배송 상태를 다시 확인합니다.
+
+## 4. Current Architecture
+```text
+User
+↓
+FastAPI Router
+↓
+Orchestrator
+↓
+Pending State 확인
+│
+├─ 진행 중인 State 존재
+│   → 기존 Multi-turn Flow 계속 처리
+│
+└─ 진행 중인 State 없음
+    ↓
+    Intent Classification
+    ↓
+    Routing
+    ├─ Read Flow
+    │   ├─ order_confirmation
+    │   └─ payment_confirmation
+    │
+    │   → Service / Policy
+    │   → Consistency Check
+    │   → Response Generation
+    │
+    └─ Write Flow
+        ├─ order_cancel
+        │   → Policy
+        │   → 사용자 승인
+        │   → Cancel / Refund Action
+        │
+        └─ delivery_address_change
+            → Policy
+            → 새 배송지 수집
+            → State 임시 저장
+            → 사용자 승인
+            → 상태 재검증
+            → Address Change Action
 
 ### 역할 분리
 
@@ -292,12 +330,22 @@ python -m pytest -v
 - 결제 완료 확인 멀티턴 Flow
 - 주문 완료 + 결제 실패 상태의 Consistency Routing
 - 주문 실패 + 결제 완료 상태의 Consistency Routing
+
 - 주문 취소 가능 여부 Policy
 - 사용자 승인 / 거절 / 불명확 응답 처리
 - 카드 주문 취소 Action
 - 계좌이체 주문 취소 및 환불계좌 수집
 - 주문 취소 Multi-turn Flow
 - FastAPI Swagger 기반 주문 취소 End-to-End Flow
+
+- 배송지 변경 가능 여부 Policy
+- 배송지 변경 대상 주문 선택 Flow
+- 새 배송지 수집 및 State 임시 저장
+- 배송지 변경 승인 / 거절 / 불명확 응답 처리
+- 배송지 변경 Write Action
+- Action 직전 주문 / 배송 상태 재검증
+- 배송지 변경 Multi-turn End-to-End Flow
+- FastAPI Swagger 기반 배송지 변경 End-to-End Flow
 
 현재 전체 테스트 28개가 통과합니다.
 
@@ -306,6 +354,15 @@ python -m pytest -v
 ## 10. Documentation
 
 상세 설계는 `docs/`에서 확인할 수 있습니다.
+
+- `docs/architecture.md`
+  - 현재 Chatbot Architecture와 Component별 역할
+
+- `docs/architecture_evolution.md`
+  - 주요 구조 변경의 문제, 설계 결정, 변경 이유 기록
+
+- `docs/policies/delivery_address_change_policy_v1.md`
+  - 배송지 변경 가능 조건 및 Write Action 실행 원칙
 
 - `docs/output_response_design.md`
   - Policy / Consistency / Output Response 구조

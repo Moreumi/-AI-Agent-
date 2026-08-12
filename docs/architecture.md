@@ -11,6 +11,7 @@
 전체 흐름을 관리하는 것을 목표로 한다.
 
 ---
+
 ## 2. 전체 처리 흐름
 
 현재 구현된 CS Flow는 크게 Read Flow와 Write Flow로 구분된다.
@@ -47,26 +48,46 @@ Pending State 확인
     │   Response Generation
     │
     └─ Write Flow
-        └─ order_cancel
+        │
+        ├─ order_cancel
+        │   ↓
+        │   주문 조회
+        │   ↓
+        │   Order Cancel Policy
+        │   ↓
+        │   사용자 최종 승인
+        │   ↓
+        │   Write Action
+        │   ├─ 주문 취소
+        │   └─ 결제 취소
+        │       ↓
+        │       Refund Flow
+        │       ├─ card → refund_processing
+        │       └─ cash
+        │           → refund_account_required
+        │           → 환불계좌 입력
+        │           → refund_processing
+        │   ↓
+        │   Final Response
+        │
+        └─ delivery_address_change
             ↓
             주문 조회
             ↓
-            Order Cancel Policy
+            Delivery Address Change Policy
+            ↓
+            새 배송지 수집
+            ↓
+            State 임시 저장
             ↓
             사용자 최종 승인
             ↓
-            Write Action
-            ├─ 주문 취소
-            └─ 결제 취소
-                    ↓
-                Refund Flow
-                ├─ card → refund_processing
-                └─ cash
-                    → refund_account_required
-                    → 환불계좌 입력
-                    → refund_processing
+            Action 직전 상태 재검증
+            ↓
+            Delivery Address Change Action
             ↓
             Final Response
+```
 
 ---
 
@@ -93,6 +114,7 @@ Router는 비즈니스 판단을 담당하지 않고,
 order_confirmation
 payment_confirmation
 order_cancel
+delivery_address_change
 ```
 
 분류 결과는 Orchestrator가 다음 처리 경로를 결정하는 데 사용한다.
@@ -107,7 +129,7 @@ order_cancel
 
 - Intent 결과에 따른 Routing
 - 필요한 정보가 충분한지 확인
-- State 확인
+- Pending State 확인
 - Service 호출
 - Policy 결과 확인
 - Consistency 결과 확인
@@ -115,6 +137,7 @@ order_cancel
 - 최종 응답 생성 Component 호출
 - Write Action 실행 전 사용자 최종 승인 확인
 - 주문 취소 이후 결제 방식에 따른 Refund Flow 분기
+- 배송지 변경 과정에서 주문 선택, 새 주소 수집, 최종 승인 흐름 제어
 - 진행 중인 Action에 따라 Multi-turn State 계속 처리
 
 즉 개별 기능을 직접 수행하기보다
@@ -124,7 +147,8 @@ order_cancel
 
 ### State
 
-멀티턴 대화에서 이전 처리 상태를 유지한다.
+멀티턴 대화에서 이전 처리 상태와
+다음 사용자 입력까지 유지해야 하는 임시 정보를 관리한다.
 
 예를 들어 고객에게 여러 주문이 존재하는 경우
 Agent가 임의로 주문을 선택하지 않고 추가 질문을 한다.
@@ -157,11 +181,15 @@ Agent
 
 기존 State를 확인하여
 order_confirmation Flow 계속 처리
-
 ```
 
-주문 취소 Flow에서는 Action 실행 전 사용자 승인을 기다리거나,
-계좌이체 환불을 위한 추가 정보를 수집하는 데에도 State를 사용한다.
+주문 취소 Flow에서는
+Action 실행 전 사용자 승인을 기다리거나,
+계좌이체 환불을 위한 추가 정보를 수집하는 데 State를 사용한다.
+
+배송지 변경 Flow에서는
+선택한 주문번호와 사용자가 입력한 새 배송지를 저장한 뒤
+사용자의 최종 승인을 기다리는 데 State를 사용한다.
 
 현재 주요 State 값은 다음과 같다.
 
@@ -175,35 +203,67 @@ candidate_orders
 selected_order_id
 → 현재 처리 중인 주문번호
 
+pending_data
+→ 다음 턴까지 유지해야 하는 기능별 임시 데이터
 ```
 
+배송지 변경의 예:
+
+```python
+state = {
+    "pending_action": "confirm_delivery_address_change",
+    "candidate_orders": [],
+    "selected_order_id": 10001,
+    "pending_data": {
+        "new_delivery_address": "서울시 강남구 테헤란로 123"
+    },
+}
+```
+
+`pending_data`는 배송지 변경 전용 필드가 아니라,
+향후 다른 Multi-turn Write Flow에서도
+임시 데이터를 저장하기 위한 공통 Interface로 사용한다.
+
 현재 MVP에서는 Python Dictionary 기반 State를 사용한다.
-현재 State는 서버 메모리에 저장되므로
-서버가 재시작되면 State가 초기화된다.
-향후 실제 서비스에서는 사용자별 Session 또는 영속 State 저장 방식이 필요하다.
+
+State는 서버 메모리에 저장되므로
+서버가 재시작되면 진행 중인 State가 초기화된다.
+
+향후 실제 서비스에서는
+사용자 또는 Session 단위의 State 관리와
+영속 저장 방식이 필요하다.
 
 ---
 
 ### Service / Data
 
 고객의 주문·결제·환불 데이터를 조회하고,
-확정된 Action에 따라 상태를 변경하는 역할을 담당한다.
+Policy 판단에 필요한 결과를 반환한다.
 
-예:
+또한 Orchestrator에서 확정된 Write Action 요청이 전달되면
+실제 데이터 상태 변경을 수행한다.
+
+주요 조회 데이터 예시는 다음과 같다.
 
 ```text
 order_id
 order_status
 order_date
 total_price
+delivery_status
+delivery_address
 
 payment_status
 payment_method
 payment_amount
 payment_date
 
+refund_status
+```
+
 현재 주요 Write Action은 다음과 같다.
 
+```text
 cancel_order()
 → 주문 상태 변경
 → 결제 상태 변경
@@ -213,10 +273,58 @@ register_refund_account()
 → 환불계좌 정보 저장
 → refund_status를 refund_processing으로 변경
 
-Service는 데이터를 조회하고
-Policy 판단에 필요한 결과를 반환한다.
+change_delivery_address()
+→ Action 직전 주문/배송 상태 재검증
+→ 주문의 delivery_address 변경
+```
 
-Write Action은 Orchestrator가 사용자의 명확한 승인을 확인한 이후에만 호출한다.
+Service는 데이터를 조회하여
+Policy 판단에 필요한 결과를 반환하고,
+확정된 Action 요청이 전달되면 데이터 상태 변경을 수행한다.
+
+Write Action은 Orchestrator가
+필요한 조건과 사용자의 명확한 승인을 확인한 이후에만 호출한다.
+
+---
+
+### Policy Layer
+
+Service에서 조회된 데이터를 기준으로
+쇼핑몰의 Business Rule을 적용한다.
+
+현재 구현된 주요 Policy는 다음과 같다.
+
+```text
+Order Completion Policy
+→ 주문 완료 여부 판단
+
+Payment Completion Policy
+→ 결제 완료 여부 판단
+
+Order-Payment Consistency Policy
+→ 주문 상태와 결제 상태의 일관성 검증
+
+Order Cancel Policy
+→ 주문 취소 가능 여부 판단
+
+Delivery Address Change Policy
+→ 배송지 변경 가능 여부 판단
+```
+
+Policy는 실제 Write Action을 수행하지 않는다.
+
+예를 들어 배송지 변경의 경우:
+
+```text
+order_completed
++
+preparing_shipment
+
+→ changeable
+```
+
+이라고 판단할 수 있지만,
+이 결과만으로 실제 배송지를 변경하지 않는다.
 
 ---
 
@@ -301,8 +409,11 @@ LLM은 다음 사항을 새롭게 판단하지 않는다.
 
 - 주문 완료 여부
 - 결제 완료 여부
+- 주문 취소 가능 여부
+- 배송지 변경 가능 여부
 - 쇼핑몰 정책
 - 데이터 불일치 해결 방법
+- Write Action 실행 여부
 
 즉 현재 구조에서 LLM은
 
@@ -318,11 +429,19 @@ LLM은 다음 사항을 새롭게 판단하지 않는다.
 
 을 담당한다.
 
+일부 Multi-turn 확인 응답과
+Write Action 관련 고정 응답은
+현재 Python 코드에서 직접 생성하고 있다.
+
 ---
 
 ## 4. Multi-turn Flow
 
-정보가 부족한 경우 바로 Service를 호출하지 않는다.
+정보가 부족하거나
+Write Action 수행을 위해 추가 정보가 필요한 경우
+State를 이용해 다음 사용자 입력까지 Flow를 유지한다.
+
+기본 구조는 다음과 같다.
 
 ```text
 사용자 질문
@@ -339,7 +458,7 @@ Orchestrator
 ```text
 Service
 → Policy
-→ Consistency
+→ 필요한 추가 검증
 → Response
 ```
 
@@ -349,8 +468,45 @@ Service
 State 저장
 → 추가 질문
 → 다음 사용자 입력
-→ State 복원
+→ Pending State 확인
 → 기존 Flow 계속 처리
+```
+
+배송지 변경의 경우 다음과 같이 여러 턴을 사용한다.
+
+```text
+사용자
+"10001번 주문 배송지 바꿔줘"
+
+↓
+변경 가능 여부 확인
+
+↓
+pending_action = collect_delivery_address
+
+Agent
+"변경할 새로운 배송지를 입력해 주세요."
+
+↓
+사용자
+"서울시 강남구 테헤란로 123"
+
+↓
+pending_data에 새 주소 임시 저장
+pending_action = confirm_delivery_address_change
+
+↓
+Agent
+"이 배송지로 변경하시겠어요?"
+
+↓
+사용자
+"예"
+
+↓
+Write Action 실행
+↓
+State 초기화
 ```
 
 ---
@@ -364,16 +520,30 @@ CS
 └─ 주문/결제
    ├─ 주문 완료 확인
    ├─ 결제 완료 확인
-   └─ 주문 취소
-       ├─ 주문 취소 가능 여부 판단
+   ├─ 주문 취소
+   │   ├─ 주문 취소 가능 여부 판단
+   │   ├─ 사용자 최종 승인
+   │   ├─ 주문/결제 취소 Action
+   │   └─ 환불 처리
+   │       ├─ 카드
+   │       │   → refund_processing
+   │       └─ 계좌이체
+   │           → 환불계좌 수집
+   │           → refund_processing
+   │
+   └─ 배송지 변경
+       ├─ 주문 선택
+       ├─ 배송지 변경 가능 여부 판단
+       ├─ 새 배송지 수집
+       ├─ State 임시 저장
        ├─ 사용자 최종 승인
-       ├─ 주문/결제 취소 Action
-       └─ 환불 처리
-           ├─ 카드
-           │   → refund_processing
-           └─ 계좌이체
-               → 환불계좌 수집
-               → refund_processing
+       ├─ Action 직전 상태 재검증
+       └─ 배송지 변경 Action
+```
+
+현재 전체 자동 테스트 55개가 통과하며,
+배송지 변경 Flow는 FastAPI Swagger를 통해
+Multi-turn End-to-End 동작을 추가로 검증했다.
 
 ---
 
@@ -386,24 +556,51 @@ Business 판단
 → Python / Policy
 
 자연어 표현
-→ LLM
+→ LLM 또는 Response Layer
 ```
 
 ### Agent 흐름은 Orchestrator가 제어한다
 
 LLM이 임의로 다음 행동을 선택하기보다
-Orchestrator가 명시적인 Routing 기준에 따라
+Orchestrator가 명시적인 Routing 기준과 State를 기반으로
 다음 Component를 호출한다.
 
 ### 관련 데이터의 일관성을 확인한다
 
 하나의 데이터만 보고 최종 결과를 확정하지 않고,
-관련된 주문과 결제 상태를 함께 검증한다.
+필요한 경우 관련된 주문과 결제 상태를 함께 검증한다.
 
 ### 정보가 부족하면 추가 질문한다
 
 필요한 정보가 없는 상태에서 추측하지 않고
 State를 유지한 채 사용자에게 추가 정보를 요청한다.
+
+### 판단과 Write Action을 분리한다
+
+Policy에서 Action 가능 여부를 판단했다고 해서
+즉시 실제 데이터를 변경하지 않는다.
+
+```text
+Policy 판단
+≠
+사용자 승인
+≠
+Write Action
+```
+
+실제 데이터를 변경하는 기능은
+필요한 정보가 모두 확인되고
+사용자가 명확하게 승인한 이후에만 실행한다.
+
+### Write Action 직전에 상태를 재검증한다
+
+최초 Policy 판단 이후
+사용자와의 Multi-turn 대화가 진행되는 동안
+실제 데이터 상태가 변경될 수 있다.
+
+따라서 배송지 변경처럼
+현재 상태에 따라 실행 가능 여부가 달라지는 Action은
+실제 실행 직전에 상태를 다시 확인한다.
 
 ---
 
@@ -415,6 +612,7 @@ State를 유지한 채 사용자에게 추가 정보를 요청한다.
 CS
 ├─ 회원/계정
 ├─ 주문/결제
+│   └─ payment_method_change
 ├─ 교환/환불
 ├─ 배송
 └─ 상품 정보
