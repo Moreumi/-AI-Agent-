@@ -35,6 +35,10 @@ from app.policies.payment_completion_policy import (
     PAYMENT_COMPLETION_POLICY_CONTEXT,
 )
 
+from app.policies.payment_method_change_policy import (
+    judge_payment_method_change,
+)
+
 
 # =========================================================
 # 1. 주문 완료 확인 최종 응답 생성
@@ -385,6 +389,34 @@ def build_delivery_address_change_response(result: dict) -> str:
     return (
         "현재 주문 상태만으로 배송지 변경 가능 여부를 "
         "확인하기 어렵습니다. 추가 확인이 필요합니다."
+    )
+
+# =========================================================
+# 결제수단 변경 Policy 결과 → 사용자 응답
+# =========================================================
+
+def build_payment_method_change_response(result: dict) -> str:
+    """
+    결제 완료 후 결제수단 변경 요청에 대한
+    Policy 결과를 사용자 안내 문장으로 변환한다.
+    """
+
+    judgment = result["payment_method_change_judgment"]
+    recommended_action = result["recommended_action"]
+
+    if (
+        judgment == "not_changeable"
+        and recommended_action == "cancel_and_reorder"
+    ):
+        return (
+            "결제가 완료된 주문은 결제수단을 직접 변경할 수 없습니다. "
+            "다른 결제수단을 이용하시려면 기존 주문을 취소한 후 "
+            "원하시는 결제수단으로 다시 주문해 주세요."
+        )
+
+    return (
+        "결제수단 변경 가능 여부를 확인하는 중 "
+        "문제가 발생했습니다."
     )
 
 # =========================================================
@@ -1261,8 +1293,26 @@ def route_request(
             "response": response,
         }
 
+    # =====================================================
+    # 7) 결제수단 변경
+    # =====================================================
+
+    if request.sub_intent == "payment_method_change":
+
+        result = judge_payment_method_change()
+
+        response = build_payment_method_change_response(result)
+
+        return {
+            "route": "payment_method_change",
+            "request": request,
+            "result": result,
+            "response": response,
+        }
+
+
     # -----------------------------------------------------
-    # 7) 아직 구현하지 않은 기능
+    # 8) 아직 구현하지 않은 기능
     # -----------------------------------------------------
 
     return {

@@ -3,9 +3,8 @@
 온라인 쇼핑몰에서 고객의 문의를 이해하고,  
 CS 응대와 상품 추천을 처리할 수 있는 AI Agent를 개발하는 프로젝트입니다.
 
-현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 주문 취소 / 배송지 변경**을 중심으로
+현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 결제수단 변경 / 주문 취소 / 배송지 변경**을 중심으로
 사용자 입력부터 최종 응답까지 End-to-End 처리 흐름을 구현하고 있습니다.
-
 ---
 
 ## 1. Project Goal
@@ -83,6 +82,27 @@ CS 응대와 상품 추천을 처리할 수 있는 AI Agent를 개발하는 프�
 주문이 여러 건 존재하는 경우에는
 Agent가 임의로 주문을 선택하지 않고 사용자에게 주문번호를 추가로 확인합니다.
 
+### 결제수단 변경
+
+```text
+사용자 질문
+→ Intent Classification
+→ Payment Method Change Policy
+→ 결제수단 직접 변경 불가 판단
+→ 취소 후 재주문 안내
+→ Flow 종료
+```
+
+결제가 완료된 주문의 결제수단은 직접 변경할 수 없다는
+Business Rule을 안내하는 Guidance Flow로 구현했습니다.
+
+이 기능에서는 주문 조회나 State를 사용하지 않으며,
+주문 취소를 자동으로 실행하지 않습니다.
+
+사용자가 이후 별도로 주문 취소를 요청하면
+새로운 Intent Classification을 거쳐
+기존 `order_cancel` Flow로 진입합니다.
+
 ### 주문 취소
 
 ```text
@@ -153,24 +173,16 @@ Pending State 확인
     │   ├─ order_confirmation
     │   └─ payment_confirmation
     │
-    │   → Service / Policy
-    │   → Consistency Check
-    │   → Response Generation
+    ├─ Guidance Flow
+    │   └─ payment_method_change
+    │       → Policy
+    │       → Guidance Response
+    │       → Flow 종료
     │
     └─ Write Flow
         ├─ order_cancel
-        │   → Policy
-        │   → 사용자 승인
-        │   → Cancel / Refund Action
-        │
         └─ delivery_address_change
-            → Policy
-            → 새 배송지 수집
-            → State 임시 저장
-            → 사용자 승인
-            → 상태 재검증
-            → Address Change Action
-
+```
 ### 역할 분리
 
 **Service / Data**
@@ -244,6 +256,25 @@ fact_summary
 narrative_guidance
 → Policy, 예외, 데이터 불일치 설명
 ```
+
+### 기능의 성격에 따른 Flow 분리
+
+모든 CS 기능에 동일한 처리 구조를 적용하지 않습니다.
+
+```text
+Read Flow
+→ 실제 데이터 조회가 필요한 기능
+
+Guidance Flow
+→ Business Policy 안내만 필요한 기능
+
+Write Flow
+→ 실제 데이터 변경이 필요한 기능
+```
+
+예를 들어 결제수단 변경은
+결제 완료 후 직접 변경할 수 없다는 정책 안내가 핵심이므로
+불필요한 주문 조회, State, 사용자 승인, Write Action을 추가하지 않았습니다.
 
 ---
 
@@ -347,7 +378,12 @@ python -m pytest -v
 - 배송지 변경 Multi-turn End-to-End Flow
 - FastAPI Swagger 기반 배송지 변경 End-to-End Flow
 
-현재 전체 테스트 28개가 통과합니다.
+- 결제수단 변경 Policy
+- 결제수단 변경 Guidance Routing
+- 결제수단 변경 안내 후 State 미생성 확인
+- 결제수단 변경 안내 종료 후 별도 주문 취소 요청이 기존 `order_cancel` Flow로 진입하는지 검증
+
+현재 전체 테스트 58개가 통과합니다.
 
 ---
 
@@ -361,11 +397,11 @@ python -m pytest -v
 - `docs/architecture_evolution.md`
   - 주요 구조 변경의 문제, 설계 결정, 변경 이유 기록
 
-- `docs/policies/delivery_address_change_policy_v1.md`
-  - 배송지 변경 가능 조건 및 Write Action 실행 원칙
-
 - `docs/output_response_design.md`
   - Policy / Consistency / Output Response 구조
+
+- `docs/policies/delivery_address_change_policy_v1.md`
+  - 배송지 변경 가능 조건 및 Write Action 실행 원칙
 
 - `docs/order_confirmation_e2e.md`
   - 주문 완료 확인 End-to-End 처리 흐름
@@ -375,6 +411,9 @@ python -m pytest -v
 
 - `docs/policies/`
   - 주문 / 결제 / Consistency Policy 정의
+
+- `docs/policies/payment_method_change_policy_v1.md`
+  - 결제 완료 후 결제수단 변경 불가 및 취소 후 재주문 정책
 
 ---
 

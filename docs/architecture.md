@@ -14,7 +14,8 @@
 
 ## 2. 전체 처리 흐름
 
-현재 구현된 CS Flow는 크게 Read Flow와 Write Flow로 구분된다.
+현재 구현된 CS Flow는 기능의 성격에 따라
+Read Flow, Guidance Flow, Write Flow로 구분된다.
 
 ```text
 User
@@ -46,6 +47,19 @@ Pending State 확인
     │   Order-Payment Consistency Check
     │   ↓
     │   Response Generation
+    │
+    ├─ Guidance Flow
+    │   └─ payment_method_change
+    │       ↓
+    │       Payment Method Change Policy
+    │       ↓
+    │       결제수단 직접 변경 불가 판단
+    │       ↓
+    │       취소 후 재주문 안내
+    │       ↓
+    │       Guidance Response
+    │       ↓
+    │       State 생성 없이 Flow 종료
     │
     └─ Write Flow
         │
@@ -113,6 +127,7 @@ Router는 비즈니스 판단을 담당하지 않고,
 ```text
 order_confirmation
 payment_confirmation
+payment_method_change
 order_cancel
 delivery_address_change
 ```
@@ -139,6 +154,7 @@ delivery_address_change
 - 주문 취소 이후 결제 방식에 따른 Refund Flow 분기
 - 배송지 변경 과정에서 주문 선택, 새 주소 수집, 최종 승인 흐름 제어
 - 진행 중인 Action에 따라 Multi-turn State 계속 처리
+- 결제수단 변경과 같은 Policy 안내형 CS의 Guidance Flow Routing
 
 즉 개별 기능을 직접 수행하기보다
 **각 Component를 어떤 순서로 호출할지 결정하는 역할**을 담당한다.
@@ -289,8 +305,12 @@ Write Action은 Orchestrator가
 
 ### Policy Layer
 
-Service에서 조회된 데이터를 기준으로
-쇼핑몰의 Business Rule을 적용한다.
+Service에서 조회된 데이터 또는 서비스의 Business Rule을 기준으로
+각 기능에서 필요한 업무적 판단을 수행한다.
+
+Policy는 고객에게 보여줄 문장을 직접 결정하는 것이 아니라,
+Orchestrator가 다음 처리 단계를 선택할 수 있도록
+명시적인 판단 결과를 반환한다.
 
 현재 구현된 주요 Policy는 다음과 같다.
 
@@ -309,9 +329,18 @@ Order Cancel Policy
 
 Delivery Address Change Policy
 → 배송지 변경 가능 여부 판단
+
+Payment Method Change Policy
+→ 결제 완료 후 결제수단 변경 가능 여부 및 대안 판단
 ```
 
-Policy는 실제 Write Action을 수행하지 않는다.
+---
+
+#### Action 가능 여부를 판단하는 Policy
+
+주문 취소나 배송지 변경처럼
+실제 데이터를 변경할 가능성이 있는 기능에서는
+Policy가 **Action을 실행해도 되는 조건인지** 먼저 판단한다.
 
 예를 들어 배송지 변경의 경우:
 
@@ -323,8 +352,89 @@ preparing_shipment
 → changeable
 ```
 
-이라고 판단할 수 있지만,
-이 결과만으로 실제 배송지를 변경하지 않는다.
+이라고 판단할 수 있다.
+
+하지만 Policy는 실제 Write Action을 수행하지 않는다.
+
+```text
+Policy 판단
+→ changeable
+
+≠
+
+실제 배송지 변경
+```
+
+`changeable`은 현재 상태에서 배송지 변경이 가능하다는
+Business 판단 결과일 뿐이다.
+
+실제 배송지 변경은 이후 Orchestrator에서
+
+```text
+사용자 최종 승인
+→ Action 직전 상태 재검증
+→ Write Action
+```
+
+과정을 거친 뒤 실행한다.
+
+따라서 다음 세 단계는 서로 분리한다.
+
+```text
+Policy 판단
+≠
+사용자 승인
+≠
+Write Action
+```
+
+---
+
+#### 안내 자체가 결과가 되는 Guidance Policy
+
+모든 Policy가 Write Action이나
+실제 데이터 조회로 이어지는 것은 아니다.
+
+`Payment Method Change Policy`처럼
+서비스의 Business Rule 자체를 안내하는 기능도 있다.
+
+현재 결제수단 변경 정책은 다음과 같다.
+
+```text
+결제가 완료된 주문
++
+결제수단 변경 요청
+
+→ 직접 변경 불가
+→ 기존 주문 취소 후 재주문 안내
+```
+
+이 경우 Policy 판단 이후
+추가적인 Write Action이 필요하지 않다.
+
+```text
+Payment Method Change Policy
+↓
+not_changeable
++
+cancel_and_reorder
+↓
+Guidance Response
+↓
+Flow 종료
+```
+
+따라서 `payment_method_change`에서는 다음 Component를 사용하지 않는다.
+
+```text
+주문 조회
+State 저장
+사용자 최종 승인
+Write Action
+```
+
+필요하지 않은 Component를 추가하지 않고
+Policy 결과를 고객 안내로 연결한 뒤 Flow를 종료한다.
 
 ---
 
@@ -520,6 +630,11 @@ CS
 └─ 주문/결제
    ├─ 주문 완료 확인
    ├─ 결제 완료 확인
+   ├─ 결제수단 변경
+   │   ├─ Payment Method Change Policy
+   │   ├─ 직접 변경 불가 안내
+   │   ├─ 취소 후 재주문 안내
+   │   └─ State 없이 Flow 종료
    ├─ 주문 취소
    │   ├─ 주문 취소 가능 여부 판단
    │   ├─ 사용자 최종 승인
@@ -541,7 +656,8 @@ CS
        └─ 배송지 변경 Action
 ```
 
-현재 전체 자동 테스트 55개가 통과하며,
+현재 전체 자동 테스트 58개가 통과한다.
+
 배송지 변경 Flow는 FastAPI Swagger를 통해
 Multi-turn End-to-End 동작을 추가로 검증했다.
 
@@ -602,6 +718,24 @@ Write Action
 현재 상태에 따라 실행 가능 여부가 달라지는 Action은
 실제 실행 직전에 상태를 다시 확인한다.
 
+### 기능의 성격에 따라 필요한 Component만 사용한다
+
+모든 CS 기능에 동일한 처리 단계를 적용하지 않는다.
+
+```text
+Read Flow
+→ 실제 데이터 조회가 필요한 기능
+
+Guidance Flow
+→ Business Policy 안내만 필요한 기능
+
+Write Flow
+→ 실제 데이터 변경이 필요한 기능
+```
+
+기능의 요구사항에 필요하지 않은 Component는
+불필요하게 추가하지 않는다.
+
 ---
 
 ## 7. 향후 확장 방향
@@ -612,9 +746,10 @@ Write Action
 CS
 ├─ 회원/계정
 ├─ 주문/결제
-│   └─ payment_method_change
 ├─ 교환/환불
 ├─ 배송
+│   ├─ delivery_status
+│   └─ delivery_eta
 └─ 상품 정보
 
 상품 추천
