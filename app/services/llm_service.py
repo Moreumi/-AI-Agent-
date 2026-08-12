@@ -45,18 +45,51 @@ classification_prompt = ChatPromptTemplate.from_messages([
 - product_info: 상품 정보
 
 [order_payment의 sub_intent]
+
 - order_confirmation: 주문 완료 여부 확인
 - payment_confirmation: 결제 완료 여부 확인
 - payment_method_change: 결제 방식 변경
 - delivery_address_change: 주문 후 배송지 변경
 - order_cancel: 주문 취소
 - order_change: 주문 수량 변경
-- unknown: 위 세부 유형으로 판단할 수 없음
+
+[delivery의 sub_intent]
+
+- delivery_status: 현재 주문의 배송 상태 또는 배송 진행 현황 확인
+
+[unknown]
+
+- 위 세부 유형으로 판단할 수 없으면 unknown으로 반환한다.
+
+[cs_category와 sub_intent 일관성 규칙]
+
+- delivery_status로 판단한 경우 cs_category는 반드시 delivery로 반환한다.
+- 사용자 질문에 "주문", "주문번호", 특정 order_id가 포함되어 있더라도,
+  질문의 핵심 목적이 현재 배송 상태나 배송 진행 상황 확인이면 delivery로 분류한다.
+- "내 주문", "주문번호"라는 표현만으로 order_payment로 분류하지 않는다.
+- order_payment는 주문 완료, 결제 완료, 결제수단 변경, 배송지 변경, 주문 취소, 주문 변경 문의에 사용한다.
+
+예시:
+
+"내 주문 지금 어디까지 왔어?"
+→ cs_category = delivery
+→ sub_intent = delivery_status
+
+"10004번 주문 배송 상태 알려줘"
+→ cs_category = delivery
+→ sub_intent = delivery_status
+
+"내 주문 제대로 들어갔어?"
+→ cs_category = order_payment
+→ sub_intent = order_confirmation
 
 [order_id]
+
 - 사용자 질문에 주문번호가 명확하게 제시된 경우에만 추출한다.
 - 주문번호가 없으면 null로 반환한다.
 - 다른 숫자를 임의로 주문번호라고 판단하지 않는다.
+
+
 """
     ),
     (

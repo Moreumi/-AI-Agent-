@@ -29,6 +29,7 @@ class UserRequest(BaseModel):
         "delivery_address_change",
         "order_cancel",
         "order_change",
+        "delivery_status",
         "unknown"
     ] | None = Field(
         default=None,
