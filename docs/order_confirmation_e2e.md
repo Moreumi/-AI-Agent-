@@ -176,3 +176,115 @@ tests/test_order_confirmation_flow.py::test_order_confirmation_multiturn_flow PA
 ### 최종 결과
 
 주문 완료 확인 멀티턴 흐름에 대한 pytest 자동 테스트가 정상적으로 통과하였다.
+
+---
+
+## 현재 구현 구조 업데이트
+
+초기 주문 완료 확인 기능은 주문 데이터를 조회한 뒤
+Python 고정 응답을 반환하는 구조로 구현하였다.
+
+이후 Policy Layer와 공통 Output Response 구조를 추가하여
+현재는 다음 흐름으로 동작한다.
+
+```text
+사용자 질문
+↓
+Intent Classification
+↓
+order_confirmation
+↓
+주문 데이터 조회
+↓
+Order Completion Policy
+↓
+judgment 생성
+↓
+Order-Payment Consistency 검사
+↓
+Orchestrator 응답 방식 결정
+↓
+최종 응답
+```
+
+### 주문 완료 Policy
+
+현재 MVP에서는 다음 기준으로 주문 상태를 판단한다.
+
+```text
+order_completed
+→ completed
+
+order_canceled
+→ canceled
+
+order_failed
+→ failed
+
+정의되지 않은 상태
+→ needs_review
+```
+
+LLM이 주문 상태를 직접 해석하지 않고,
+Python Business Rule에서 먼저 `judgment`를 확정한다.
+
+### 주문-결제 Consistency 검증
+
+주문 자체가 완료 상태라도 연결된 결제 상태와 모순되는 경우
+정상 주문 완료 응답을 바로 생성하지 않는다.
+
+예:
+
+```text
+order_status = order_completed
+payment_status = payment_failed
+
+↓
+consistency_judgment = needs_review
+```
+
+이 경우 정상 조회 결과용 `fact_summary`를 사용하지 않고
+설명이 필요한 `narrative_guidance` 응답으로 분기한다.
+
+### Response Mode
+
+정상적인 주문 완료 확인:
+
+```text
+response_mode = fact_summary
+```
+
+출력 예:
+
+```text
+주문이 정상적으로 접수되었습니다.
+
+- 주문 번호: 10002
+- 주문 상태: 완료
+- 주문 날짜: 2026년 8월 10일
+- 주문 금액: 32,000원
+
+추가로 궁금한 점이 있으시면 언제든지 문의해 주세요.
+```
+
+주문과 결제 상태가 불일치하는 경우:
+
+```text
+response_mode = narrative_guidance
+```
+
+### Hybrid Response
+
+주문 선택 등 대화 흐름을 제어하는 응답은
+결정적인 Python 응답을 유지한다.
+
+```text
+주문 선택 요청
+→ Python
+
+확정된 주문 결과 설명
+→ Output Prompt + LLM
+```
+
+이를 통해 LLM은 업무 상태를 판단하지 않고,
+확정된 결과를 고객 친화적으로 표현하는 역할만 담당한다.

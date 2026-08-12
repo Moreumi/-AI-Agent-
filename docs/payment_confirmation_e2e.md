@@ -171,3 +171,115 @@ Request:
 5. HTTP 요청 간 State 유지 및 초기화 확인
 
 따라서 결제 완료 확인 기능의 현재 MVP 범위에 대한 End-to-End 연결이 정상적으로 동작함을 확인하였다.
+
+---
+
+## 현재 구현 구조 업데이트
+
+초기 결제 완료 확인 기능은 결제 데이터를 조회한 뒤
+Python 고정 응답을 반환하는 구조로 구현하였다.
+
+현재는 Payment Policy, 주문-결제 Consistency 검증,
+공통 Output Response 구조를 적용한다.
+
+```text
+사용자 질문
+↓
+Intent Classification
+↓
+payment_confirmation
+↓
+결제 데이터 조회
+↓
+Payment Completion Policy
+↓
+judgment 생성
+↓
+Order-Payment Consistency 검사
+↓
+Orchestrator 응답 방식 결정
+↓
+최종 응답
+```
+
+### 결제 완료 Policy
+
+현재 MVP에서는 다음 기준으로 결제 상태를 판단한다.
+
+```text
+payment_completed
+→ completed
+
+payment_failed
+→ failed
+
+payment_canceled
+→ canceled
+
+정의되지 않은 상태
+→ needs_review
+```
+
+현재 MVP에서 지원하는 결제수단은 `card`이며,
+결제 완료 여부는 `payment_status`를 기준으로 판단한다.
+
+### 주문-결제 Consistency 검증
+
+결제 자체가 완료 상태라도 주문 상태와 모순되는 경우
+정상 결제 완료 응답을 바로 생성하지 않는다.
+
+예:
+
+```text
+order_status = order_failed
+payment_status = payment_completed
+
+↓
+consistency_judgment = needs_review
+```
+
+이 경우 정상적인 `fact_summary` 응답을 차단하고
+`narrative_guidance`로 분기한다.
+
+### Response Mode
+
+정상적인 결제 완료 확인:
+
+```text
+response_mode = fact_summary
+```
+
+출력 예:
+
+```text
+결제가 정상적으로 완료되었습니다.
+
+- 주문 번호: 10002
+- 결제 상태: 완료
+- 결제 수단: 카드
+- 결제 금액: 32,000원
+- 결제 날짜: 2026년 8월 10일
+
+추가로 궁금한 점이 있으시면 언제든지 문의해 주세요.
+```
+
+주문과 결제 상태가 불일치하는 경우:
+
+```text
+response_mode = narrative_guidance
+```
+
+### Hybrid Response
+
+결제를 확인할 주문 선택과 같은 멀티턴 제어 메시지는
+Python 응답을 유지한다.
+
+```text
+주문 선택 요청
+→ Python
+
+확정된 결제 결과 설명
+→ Output Prompt + LLM
+```
+
+이를 통해 결제 상태 판단과 자연어 표현의 책임을 분리하였다.

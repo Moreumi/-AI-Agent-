@@ -1,3 +1,10 @@
+from app.policies.order_completion_policy import judge_order_completion
+from app.policies.payment_completion_policy import judge_payment_completion
+
+from app.policies.order_payment_consistency_policy import (
+    judge_order_payment_consistency,
+)
+
 # =========================================================
 # 주문 완료 상태 확인
 # =========================================================
@@ -39,6 +46,7 @@ def check_order_completion(
 
         return {
             "result_type": "success",
+            "judgment": judge_order_completion(order["order_status"]),
             "order_id": order["order_id"],
             "order_status": order["order_status"],
             "order_date": order["order_date"],
@@ -52,6 +60,7 @@ def check_order_completion(
 
         return {
             "result_type": "success",
+            "judgment": judge_order_completion(order["order_status"]),
             "order_id": order["order_id"],
             "order_status": order["order_status"],
             "order_date": order["order_date"],
@@ -218,6 +227,7 @@ def check_payment_completion(
     # 결제 데이터 조회 성공
     return {
         "result_type": "success",
+        "judgment": judge_payment_completion(payment["payment_status"]),
         "order_id": selected_order_id,
         "payment_id": payment["payment_id"],
         "payment_status": payment["payment_status"],
@@ -294,3 +304,73 @@ def generate_payment_response(result: dict) -> str:
             )
 
     return "결제 상태를 확인할 수 없습니다."
+
+def check_order_payment_consistency(
+    orders: list[dict],
+    payments: list[dict],
+    customer_id: int,
+    order_id: int,
+) -> dict:
+    """
+    특정 주문의 주문 상태와 결제 상태가
+    서로 일관된지 확인한다.
+    """
+
+    # -----------------------------------------------------
+    # 1. 해당 고객의 주문 확인
+    # -----------------------------------------------------
+
+    order = next(
+        (
+            order
+            for order in orders
+            if order["customer_id"] == customer_id
+            and order["order_id"] == order_id
+        ),
+        None,
+    )
+
+    if order is None:
+        return {
+            "result_type": "order_not_found",
+            "consistency_judgment": "order_not_found",
+            "order_id": order_id,
+        }
+
+    # -----------------------------------------------------
+    # 2. 해당 주문의 결제 정보 확인
+    # -----------------------------------------------------
+
+    payment = next(
+        (
+            payment
+            for payment in payments
+            if payment["order_id"] == order_id
+        ),
+        None,
+    )
+
+    if payment is None:
+        return {
+            "result_type": "payment_not_found",
+            "consistency_judgment": "payment_not_found",
+            "order_id": order_id,
+            "order_status": order["order_status"],
+        }
+
+    # -----------------------------------------------------
+    # 3. 주문-결제 상태 일관성 판정
+    # -----------------------------------------------------
+
+    consistency_judgment = judge_order_payment_consistency(
+        order_status=order["order_status"],
+        payment_status=payment["payment_status"],
+    )
+
+    return {
+        "result_type": "success",
+        "consistency_judgment": consistency_judgment,
+        "order_id": order_id,
+        "order_status": order["order_status"],
+        "payment_status": payment["payment_status"],
+    }
