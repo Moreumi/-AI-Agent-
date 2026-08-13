@@ -36,17 +36,25 @@ Pending State 확인
     Routing
     │
     ├─ Read Flow
+    │   │
     │   ├─ order_confirmation
-    │   └─ payment_confirmation
-    │
-    │   ↓
-    │   Service / Data
-    │   ↓
-    │   Policy Layer
-    │   ↓
-    │   Order-Payment Consistency Check
-    │   ↓
-    │   Response Generation
+    │   ├─ payment_confirmation
+    │   │   ↓
+    │   │   Order / Payment Service
+    │   │   ↓
+    │   │   Policy Layer
+    │   │   ↓
+    │   │   Order-Payment Consistency Check
+    │   │   ↓
+    │   │   Response Generation
+    │   │
+    │   └─ delivery_status
+    │       ↓
+    │       Delivery Service
+    │       ↓
+    │       현재 배송 상태 조회
+    │       ↓
+    │       Response
     │
     ├─ Guidance Flow
     │   └─ payment_method_change
@@ -130,6 +138,7 @@ payment_confirmation
 payment_method_change
 order_cancel
 delivery_address_change
+delivery_status
 ```
 
 분류 결과는 Orchestrator가 다음 처리 경로를 결정하는 데 사용한다.
@@ -155,6 +164,7 @@ delivery_address_change
 - 배송지 변경 과정에서 주문 선택, 새 주소 수집, 최종 승인 흐름 제어
 - 진행 중인 Action에 따라 Multi-turn State 계속 처리
 - 결제수단 변경과 같은 Policy 안내형 CS의 Guidance Flow Routing
+- 배송 상태 확인 과정에서 주문 조회, 다중 주문 선택 및 Read Flow 종료 제어
 
 즉 개별 기능을 직접 수행하기보다
 **각 Component를 어떤 순서로 호출할지 결정하는 역할**을 담당한다.
@@ -249,6 +259,17 @@ State는 서버 메모리에 저장되므로
 사용자 또는 Session 단위의 State 관리와
 영속 저장 방식이 필요하다.
 
+배송 상태 확인 Flow에서도 고객에게 주문이 여러 건 존재하면
+`pending_action`과 `candidate_orders`를 사용하여
+배송 상태를 확인할 주문번호를 추가로 입력받는다.
+
+배송 상태 확인은 Read Flow이므로
+주문번호가 선택되면 즉시 조회를 수행하고 Flow가 종료된다.
+
+따라서 주문 취소나 배송지 변경과 달리
+선택된 주문번호를 이후 단계까지 유지하기 위한
+`selected_order_id`나 추가 정보를 위한 `pending_data`는 사용하지 않는다.
+
 ---
 
 ### Service / Data
@@ -300,6 +321,28 @@ Policy 판단에 필요한 결과를 반환하고,
 
 Write Action은 Orchestrator가
 필요한 조건과 사용자의 명확한 승인을 확인한 이후에만 호출한다.
+
+배송 상태 확인 기능에서는 별도의 `Delivery Service`를 사용한다.
+
+```text
+check_delivery_status()
+
+입력
+→ orders
+→ customer_id
+→ order_id(optional)
+
+처리
+→ 고객 주문 조회
+→ 주문 식별
+→ 다중 주문 여부 확인
+→ 현재 order_status / delivery_status 조회
+
+출력
+→ success
+→ not_found
+→ need_order_selection
+```
 
 ---
 
@@ -563,7 +606,26 @@ Orchestrator
 필요 정보 확인
 ```
 
-데이터 조회가 필요한 경우:
+데이터 조회가 필요한 경우에는
+기능의 성격에 따라 필요한 Component만 사용한다.
+
+객관적인 데이터 조회만 필요한 경우:
+
+```text
+Service
+→ Response
+```
+
+예:
+
+```text
+delivery_status
+→ Delivery Service
+→ 현재 배송 상태 조회
+→ Response
+```
+
+조회된 상태에 대한 Business 판단이 필요한 경우:
 
 ```text
 Service
@@ -572,7 +634,18 @@ Service
 → Response
 ```
 
+예:
+
+```text
+order_confirmation / payment_confirmation
+→ Service
+→ Policy
+→ Order-Payment Consistency Check
+→ Response
+```
+
 Policy 안내만 필요한 경우:
+
 ```text
 Policy
 → Guidance Response
@@ -589,7 +662,51 @@ State 저장
 → 기존 Flow 계속 처리
 ```
 
-배송지 변경의 경우 다음과 같이 여러 턴을 사용한다.
+배송 상태 확인의 경우
+고객에게 주문이 여러 건 존재하면 다음과 같이 처리한다.
+
+```text
+사용자
+"내 주문 배송 상태 알려줘"
+
+↓
+여러 주문 존재
+
+↓
+pending_action = delivery_status_selection
+candidate_orders 저장
+
+↓
+Agent
+"배송 상태를 확인할 주문번호를 선택해 주세요."
+
+↓
+사용자
+"10002번"
+
+↓
+Pending State 확인
+↓
+선택 가능한 주문번호인지 검증
+↓
+Delivery Service 호출
+↓
+현재 delivery_status 조회
+↓
+Response
+↓
+State 초기화
+```
+
+배송 상태 확인은 Read Flow이므로
+주문번호가 선택되면 바로 조회를 수행하고 Flow가 종료된다.
+
+따라서 주문 취소나 배송지 변경처럼
+선택된 주문번호를 이후 단계까지 유지하기 위한
+`selected_order_id`나 추가 정보를 저장하기 위한
+`pending_data`는 사용하지 않는다.
+
+배송지 변경의 경우에는 다음과 같이 여러 턴을 사용한다.
 
 ```text
 사용자
@@ -626,6 +743,10 @@ Write Action 실행
 State 초기화
 ```
 
+이처럼 Multi-turn State는 모든 기능에서 동일하게 사용하는 것이 아니라,
+해당 기능이 다음 사용자 입력까지 어떤 정보를 유지해야 하는지에 따라
+필요한 State 값만 사용한다.
+
 ---
 
 ## 5. 현재 구현 범위
@@ -661,12 +782,20 @@ CS
        ├─ 사용자 최종 승인
        ├─ Action 직전 상태 재검증
        └─ 배송지 변경 Action
+└─ 배송
+   └─ 배송 상태 확인
+       ├─ 주문 조회
+       ├─ 단일 주문 자동 선택
+       ├─ 다중 주문 선택
+       ├─ Multi-turn State 처리
+       ├─ 현재 배송 상태 조회
+       └─ Response
 ```
 
-현재 전체 자동 테스트 59개가 통과한다.
+현재 전체 자동 테스트 71개가 통과한다.
 
-배송지 변경 Flow는 FastAPI Swagger를 통해
-Multi-turn End-to-End 동작을 추가로 검증했다.
+배송지 변경 Flow와 배송 상태 확인 Flow는
+FastAPI Swagger를 통해 Multi-turn End-to-End 동작을 추가로 검증했다.
 
 ---
 
@@ -755,6 +884,16 @@ Write Flow
 
 기능의 요구사항에 필요하지 않은 Component는
 불필요하게 추가하지 않는다.
+
+예를 들어 `delivery_status`는
+현재 저장된 배송 상태라는 객관적인 사실을 조회하는 기능이므로
+별도의 Business Policy를 추가하지 않는다.
+
+```text
+delivery_status
+→ Delivery Service
+→ Response
+```
 
 ---
 

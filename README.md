@@ -3,8 +3,9 @@
 온라인 쇼핑몰에서 고객의 문의를 이해하고,  
 CS 응대와 상품 추천을 처리할 수 있는 AI Agent를 개발하는 프로젝트입니다.
 
-현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 결제수단 변경 / 주문 취소 / 배송지 변경**을 중심으로
+현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 결제수단 변경 / 주문 취소 / 배송지 변경 / 배송 상태 확인**을 중심으로
 사용자 입력부터 최종 응답까지 End-to-End 처리 흐름을 구현하고 있습니다.
+
 ---
 
 ## 1. Project Goal
@@ -166,6 +167,17 @@ Order Cancel Policy를 다시 적용합니다.
 또한 최초 판단 이후 배송이 시작되는 상황을 방지하기 위해
 실제 Action 실행 직전에 주문 상태와 배송 상태를 다시 확인합니다.
 
+### 배송 상태 확인
+
+```text
+사용자 질문
+→ Intent Classification
+→ Delivery Routing
+→ 주문 조회 / 선택
+→ Delivery Status 조회
+→ 배송 상태 응답
+```
+
 ## 4. Current Architecture
 ```text
 User
@@ -186,7 +198,8 @@ Pending State 확인
     Routing
     ├─ Read Flow
     │   ├─ order_confirmation
-    │   └─ payment_confirmation
+    │   ├─ payment_confirmation
+    │   └─ delivery_status
     │
     ├─ Guidance Flow
     │   └─ payment_method_change
@@ -322,6 +335,7 @@ app/
 ├── services/
 │   ├── llm_service.py
 │   ├── order_payment_service.py
+│   ├── delivery_service.py
 │   ├── response_service.py
 │   ├── state_service.py
 │   └── orchestrator.py
@@ -454,7 +468,17 @@ python -m pytest -v
 - 결제수단 변경 안내 후 State 미생성 확인
 - 결제수단 변경 안내 종료 후 별도 주문 취소 요청이 기존 `order_cancel` Flow로 진입하는지 검증
 
-현재 전체 테스트 59개가 통과합니다.
+- 배송 상태 조회 Service
+- 명시적 주문번호 기반 배송 상태 조회
+- 단일 주문 자동 선택
+- 다중 주문의 주문 선택 요청
+- 배송 상태 Routing
+- 배송 상태 조회 Multi-turn State 처리
+- 잘못된 주문 선택 시 State 유지
+- 배송 상태 Multi-turn End-to-End Flow
+- FastAPI Swagger 기반 배송 상태 End-to-End Flow
+
+현재 전체 테스트 71개가 통과합니다.
 
 ---
 
@@ -498,7 +522,7 @@ python -m pytest -v
 향후 다음 영역으로 확장할 예정입니다.
 
 - 주문/결제 CS 세부 기능 확장
-- 배송 / 교환 / 환불 / 상품정보 CS
+- 배송 세부 기능 / 교환 / 환불 / 상품정보 CS 확장
 - 상품 추천 Flow
 - 실제 DB 연동
 - State 관리 구조 확장

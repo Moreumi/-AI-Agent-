@@ -39,6 +39,8 @@ from app.policies.payment_method_change_policy import (
     judge_payment_method_change,
 )
 
+from app.services.delivery_service import check_delivery_status
+
 
 # =========================================================
 # 1. 주문 완료 확인 최종 응답 생성
@@ -164,6 +166,98 @@ def build_payment_confirmation_response(
         response_mode="fact_summary",
         result=result,
         policy_context=PAYMENT_COMPLETION_POLICY_CONTEXT,
+    )
+
+# =========================================================
+# 배송 상태 확인 최종 응답 생성
+# =========================================================
+
+def build_delivery_status_response(
+    user_input: str,
+    result: dict,
+) -> str:
+    """
+    배송 상태 조회 결과를 사용자 응답으로 변환한다.
+
+    - 조회 성공:
+      확인된 배송 상태만 안내한다.
+
+    - 주문 선택 필요:
+      Python에서 후보 주문을 안내한다.
+
+    - 조회 실패:
+      Python에서 조회 실패를 안내한다.
+    """
+
+    result_type = result["result_type"]
+
+    # 주문을 찾지 못한 경우
+    if result_type == "not_found":
+        return (
+            "배송 상태를 확인할 주문을 찾을 수 없습니다. "
+            "주문번호를 다시 확인해 주세요."
+        )
+
+    # 주문이 여러 건인 경우
+    if result_type == "need_order_selection":
+        candidate_orders = result["candidate_orders"]
+
+        order_list = "\n".join(
+            f"- 주문번호 {order['order_id']} / "
+            f"{order['order_date']} / "
+            f"{order['total_price']:,}원"
+            for order in candidate_orders
+        )
+
+        return (
+            "배송 상태를 확인할 주문을 선택해 주세요.\n\n"
+            f"{order_list}"
+        )
+
+    # 예상하지 못한 결과
+    if result_type != "success":
+        return "배송 상태를 확인하는 중 문제가 발생했습니다."
+
+    order_status = result["order_status"]
+    delivery_status = result["delivery_status"]
+    order_id = result["order_id"]
+
+    # 취소된 주문
+    if order_status == "order_canceled":
+        return (
+            f"주문번호 {order_id}번은 취소된 주문입니다. "
+            "현재 진행 중인 배송은 없습니다."
+        )
+
+    # 주문 실패
+    if order_status == "order_failed":
+        return (
+            f"주문번호 {order_id}번은 정상적으로 완료되지 않은 주문입니다. "
+            "현재 진행 중인 배송은 없습니다."
+        )
+
+    # 배송 준비중
+    if delivery_status == "preparing_shipment":
+        return (
+            f"주문번호 {order_id}번은 현재 배송 준비 중입니다."
+        )
+
+    # 배송중
+    if delivery_status == "in_transit":
+        return (
+            f"주문번호 {order_id}번은 현재 배송 중입니다."
+        )
+
+    # 배송완료
+    if delivery_status == "delivered":
+        return (
+            f"주문번호 {order_id}번은 배송이 완료되었습니다."
+        )
+
+    # 정의되지 않은 배송 상태
+    return (
+        f"주문번호 {order_id}번의 배송 상태를 "
+        "현재 정확하게 안내하기 어렵습니다."
     )
 
 
@@ -1077,6 +1171,60 @@ def handle_pending_state(
             "result": result,
             "response": response,
         }
+    # -----------------------------------------------------
+    # 배송 상태 확인 - 주문 선택
+    # -----------------------------------------------------
+
+    if state["pending_action"] == "delivery_status_selection":
+
+        selected_order_id = extract_order_id(user_input)
+
+        # 주문번호를 확인할 수 없는 경우
+        if selected_order_id is None:
+            return {
+                "route": "delivery_status",
+                "result": None,
+                "response": (
+                    "배송 상태를 확인할 주문번호를 입력해 주세요."
+                ),
+            }
+
+        # 사용자가 선택 가능한 주문인지 확인
+        candidate_order_ids = [
+            order["order_id"]
+            for order in state["candidate_orders"]
+        ]
+
+        if selected_order_id not in candidate_order_ids:
+            return {
+                "route": "delivery_status",
+                "result": None,
+                "response": (
+                    "선택 가능한 주문번호가 아닙니다. "
+                    "안내된 주문번호 중에서 다시 선택해 주세요."
+                ),
+            }
+
+        # 선택한 주문의 배송 상태 조회
+        result = check_delivery_status(
+            orders=orders,
+            customer_id=customer_id,
+            order_id=selected_order_id,
+        )
+
+        response = build_delivery_status_response(
+            user_input=user_input,
+            result=result,
+        )
+
+        # Read Flow가 끝났으므로 State 초기화
+        reset_state(state)
+
+        return {
+            "route": "delivery_status",
+            "result": result,
+            "response": response,
+        }
 
     return None
 
@@ -1318,9 +1466,43 @@ def route_request(
             "response": response,
         }
 
+    # -----------------------------------------------------
+    # 8) 배송 상태 확인
+    # -----------------------------------------------------
+
+    if (
+        request.intent == "cs"
+        and request.cs_category == "delivery"
+        and request.sub_intent == "delivery_status"
+    ):
+
+        result = check_delivery_status(
+            orders=orders,
+            customer_id=customer_id,
+            order_id=request.order_id,
+        )
+
+        # 주문번호가 없고 주문이 여러 건인 경우
+        if result["result_type"] == "need_order_selection":
+            state["pending_action"] = "delivery_status_selection"
+            state["candidate_orders"] = result["candidate_orders"]
+            state["selected_order_id"] = None
+
+        response = build_delivery_status_response(
+            user_input=user_input,
+            result=result,
+        )
+
+        return {
+            "route": "delivery_status",
+            "request": request.model_dump(),
+            "result": result,
+            "response": response,
+        }
+
 
     # -----------------------------------------------------
-    # 8) 아직 구현하지 않은 기능
+    # 9) 아직 구현하지 않은 기능
     # -----------------------------------------------------
 
     return {
