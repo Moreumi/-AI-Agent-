@@ -3,8 +3,7 @@
 온라인 쇼핑몰에서 고객의 문의를 이해하고,  
 CS 응대와 상품 추천을 처리할 수 있는 AI Agent를 개발하는 프로젝트입니다.
 
-현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 결제수단 변경 / 주문 취소 / 배송지 변경 / 배송 상태 확인**을 중심으로
-사용자 입력부터 최종 응답까지 End-to-End 처리 흐름을 구현하고 있습니다.
+현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 결제수단 변경 / 주문 취소 / 배송지 변경 / 배송 상태 확인 / 배송 예상 시기 안내**를 중심으로
 
 ---
 
@@ -177,6 +176,53 @@ Order Cancel Policy를 다시 적용합니다.
 → Delivery Status 조회
 → 배송 상태 응답
 ```
+### 배송 예상 시기 안내
+
+배송 예상 시기 문의는 질문이 특정 주문을 대상으로 하는지에 따라
+두 가지 처리 경로로 분리합니다.
+
+#### 일반 배송기간 문의
+
+```text
+사용자 질문
+→ Intent Classification
+→ delivery_eta / general
+→ Delivery ETA Policy
+→ 일반 배송기간 안내
+→ Flow 종료
+```
+
+예를 들어 `"배송은 보통 얼마나 걸려?"`와 같은 질문은
+특정 주문 데이터가 필요하지 않으므로 주문 조회나 State를 사용하지 않습니다.
+
+현재 MVP의 일반 배송 기준은
+배송 시작일 기준 일반 지역 `3~5 영업일`,
+제주 및 도서산간 지역 `최대 7일`입니다.
+
+#### 특정 주문의 배송 예상 시기 문의
+
+```text
+사용자 질문
+→ Intent Classification
+→ delivery_eta / order_specific
+→ 주문 조회 / 선택
+→ Delivery Status 조회
+→ Delivery ETA Policy
+→ 실제 배송 상태 + 일반 배송 기준 조합
+→ 최종 응답
+```
+
+`"내 주문 언제 와?"`, `"10004번 주문 언제 도착해?"`처럼
+실제 주문을 대상으로 하는 질문은 기존 Delivery Service를 재사용하여
+현재 `order_status`와 `delivery_status`를 먼저 확인합니다.
+
+주문이 여러 건 존재하면 Agent가 임의로 주문을 선택하지 않고,
+State에 후보 주문을 저장한 뒤 사용자에게 주문번호를 추가로 확인합니다.
+
+현재 MVP에는 택배사 실시간 Tracking 정보나
+확정 배송 예정일 데이터가 없으므로,
+실제 데이터에 존재하지 않는 정확한 도착 날짜나 현재 배송 위치를
+임의로 추정하지 않습니다.
 
 ## 4. Current Architecture
 ```text
@@ -206,6 +252,12 @@ Pending State 확인
     │       → Policy
     │       → Guidance Response
     │       → Flow 종료
+    ├─ Read + Policy Flow
+    │   └─ delivery_eta (order_specific)
+    │       → 주문 조회 / 선택
+    │       → Delivery Status 조회
+    │       → Delivery ETA Policy
+    │       → Contextual Response
     │
     └─ Write Flow
         ├─ order_cancel

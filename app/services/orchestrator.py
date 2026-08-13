@@ -41,6 +41,11 @@ from app.policies.payment_method_change_policy import (
 
 from app.services.delivery_service import check_delivery_status
 
+from app.policies.delivery_eta_policy import (
+    get_general_delivery_eta_policy,
+    judge_order_delivery_eta,
+)
+
 
 # =========================================================
 # 1. 주문 완료 확인 최종 응답 생성
@@ -260,6 +265,125 @@ def build_delivery_status_response(
         "현재 정확하게 안내하기 어렵습니다."
     )
 
+# =========================================================
+# 일반 배송 예상 시기 안내 응답
+# =========================================================
+
+def build_general_delivery_eta_response(
+    policy_result: dict,
+) -> str:
+    """
+    일반적인 배송기간 Policy를 사용자 안내 문장으로 변환한다.
+    """
+
+    standard_days = policy_result["standard_delivery_days"]
+    remote_days = policy_result["remote_area_delivery_days"]
+
+    return (
+        "일반 지역은 배송 시작일 기준 "
+        f"{standard_days} 정도 소요됩니다. "
+        "제주 및 도서산간 지역은 배송 시작일 기준 "
+        f"{remote_days} 정도 소요될 수 있습니다. "
+        "실제 배송 일정은 주문 및 배송 상황에 따라 달라질 수 있습니다."
+    )
+
+
+# =========================================================
+# 특정 주문 배송 예상 시기 안내 응답
+# =========================================================
+
+def build_order_delivery_eta_response(
+    delivery_result: dict,
+    eta_result: dict | None = None,
+) -> str:
+    """
+    특정 주문의 실제 배송 상태와
+    Delivery ETA Policy 판단 결과를 조합하여 응답한다.
+    """
+
+    result_type = delivery_result["result_type"]
+
+    # 주문을 찾지 못한 경우
+    if result_type == "not_found":
+        return (
+            "배송 예정 시기를 확인할 주문을 찾을 수 없습니다. "
+            "주문번호를 다시 확인해 주세요."
+        )
+
+    # 여러 주문 중 선택이 필요한 경우
+    if result_type == "need_order_selection":
+        candidate_orders = delivery_result["candidate_orders"]
+
+        order_list = "\n".join(
+            f"- 주문번호 {order['order_id']} / "
+            f"{order['order_date']} / "
+            f"{order['total_price']:,}원"
+            for order in candidate_orders
+        )
+
+        return (
+            "배송 예정 시기를 확인할 주문을 선택해 주세요.\n\n"
+            f"{order_list}"
+        )
+
+    # 예상하지 못한 조회 결과
+    if result_type != "success":
+        return "배송 예정 시기를 확인하는 중 문제가 발생했습니다."
+
+    if eta_result is None:
+        return "배송 예정 시기를 현재 정확하게 안내하기 어렵습니다."
+
+    order_id = delivery_result["order_id"]
+    judgment = eta_result["eta_judgment"]
+    reason = eta_result.get("reason")
+
+    # 취소된 주문 / 실패한 주문
+    if judgment == "not_applicable":
+        if reason == "order_canceled":
+            return (
+                f"주문번호 {order_id}번은 취소된 주문이므로 "
+                "배송 예정 시기를 안내할 수 없습니다."
+            )
+
+        if reason == "order_failed":
+            return (
+                f"주문번호 {order_id}번은 정상적으로 완료되지 않은 주문이므로 "
+                "배송 예정 시기를 안내할 수 없습니다."
+            )
+
+    # 이미 배송 완료
+    if judgment == "already_delivered":
+        return (
+            f"주문번호 {order_id}번은 이미 배송이 완료되었습니다."
+        )
+
+    # 현재 상태 + 일반 배송 Policy 안내
+    if judgment == "policy_guidance":
+        standard_days = eta_result["standard_delivery_days"]
+        remote_days = eta_result["remote_area_delivery_days"]
+
+        if reason == "preparing_shipment":
+            return (
+                f"주문번호 {order_id}번은 현재 배송 준비 중입니다. "
+                "배송이 시작된 이후 일반 지역은 "
+                f"{standard_days}, 제주 및 도서산간 지역은 "
+                f"{remote_days} 정도 소요될 수 있습니다."
+            )
+
+        if reason == "in_transit":
+            return (
+                f"주문번호 {order_id}번은 현재 배송 중입니다. "
+                "일반 배송 기준은 배송 시작일 기준 "
+                f"{standard_days}, 제주 및 도서산간 지역은 "
+                f"{remote_days} 정도입니다. "
+                "현재 데이터만으로 정확한 도착일은 확인하기 어렵습니다."
+            )
+
+    # 정의되지 않은 상태
+    return (
+        f"주문번호 {order_id}번의 배송 예정 시기를 "
+        "현재 정확하게 안내하기 어렵습니다."
+    )
 
 # =========================================================
 # 3. 주문 취소 가능 여부 결과 → 사용자 응답
@@ -1171,6 +1295,74 @@ def handle_pending_state(
             "result": result,
             "response": response,
         }
+
+    # -----------------------------------------------------
+    # 배송 예상 시기 - 주문 선택
+    # -----------------------------------------------------
+
+    if state["pending_action"] == "delivery_eta_selection":
+
+        selected_order_id = extract_order_id(user_input)
+
+        # 주문번호를 확인할 수 없는 경우
+        if selected_order_id is None:
+            return {
+                "route": "delivery_eta",
+                "result": None,
+                "response": (
+                    "배송 예정 시기를 확인할 주문번호를 입력해 주세요."
+                ),
+            }
+
+        # 사용자가 선택 가능한 주문인지 확인
+        candidate_order_ids = [
+            order["order_id"]
+            for order in state["candidate_orders"]
+        ]
+
+        if selected_order_id not in candidate_order_ids:
+            return {
+                "route": "delivery_eta",
+                "result": None,
+                "response": (
+                    "선택 가능한 주문번호가 아닙니다. "
+                    "안내된 주문번호 중에서 다시 선택해 주세요."
+                ),
+            }
+
+        # 선택한 주문의 실제 배송 상태 조회
+        delivery_result = check_delivery_status(
+            orders=orders,
+            customer_id=customer_id,
+            order_id=selected_order_id,
+        )
+
+        eta_result = None
+
+        # 조회 성공 시 ETA Policy 판단
+        if delivery_result["result_type"] == "success":
+            eta_result = judge_order_delivery_eta(
+                order_status=delivery_result["order_status"],
+                delivery_status=delivery_result["delivery_status"],
+            )
+
+        response = build_order_delivery_eta_response(
+            delivery_result=delivery_result,
+            eta_result=eta_result,
+        )
+
+        # Read + Policy Flow가 끝났으므로 State 초기화
+        reset_state(state)
+
+        return {
+            "route": "delivery_eta",
+            "result": {
+                "delivery_result": delivery_result,
+                "eta_result": eta_result,
+            },
+            "response": response,
+        }
+
     # -----------------------------------------------------
     # 배송 상태 확인 - 주문 선택
     # -----------------------------------------------------
@@ -1500,9 +1692,96 @@ def route_request(
             "response": response,
         }
 
+    # =========================================================
+    # 9) 배송 예상 시기 - 일반 배송기간 안내
+    # =========================================================
+
+    if (
+        request.intent == "cs"
+        and request.cs_category == "delivery"
+        and request.sub_intent == "delivery_eta"
+        and request.delivery_eta_scope == "general"
+    ):
+        policy_result = get_general_delivery_eta_policy()
+
+        response = build_general_delivery_eta_response(
+            policy_result=policy_result,
+        )
+
+        return {
+            "route": "delivery_eta",
+            "request": request.model_dump(),
+            "result": policy_result,
+            "response": response,
+        }
+
+    # =========================================================
+    # 10) 배송 예상 시기 - 특정 주문
+    # =========================================================
+
+    if (
+        request.intent == "cs"
+        and request.cs_category == "delivery"
+        and request.sub_intent == "delivery_eta"
+        and request.delivery_eta_scope == "order_specific"
+    ):
+
+        # 1. 실제 주문 및 배송 상태 조회
+
+        delivery_result = check_delivery_status(
+            orders=orders,
+            customer_id=customer_id,
+            order_id=request.order_id,
+        )
+
+        # 2. 주문이 여러 건이면 사용자에게 선택 요청
+
+        if delivery_result["result_type"] == "need_order_selection":
+            state["pending_action"] = "delivery_eta_selection"
+            state["candidate_orders"] = delivery_result["candidate_orders"]
+            state["selected_order_id"] = None
+
+            response = build_order_delivery_eta_response(
+                delivery_result=delivery_result,
+                eta_result=None,
+            )
+
+            return {
+                "route": "delivery_eta",
+                "request": request.model_dump(),
+                "result": delivery_result,
+                "response": response,
+            }
+
+        # 3. 주문 조회 성공 시 ETA Policy 판단
+
+        eta_result = None
+
+        if delivery_result["result_type"] == "success":
+            eta_result = judge_order_delivery_eta(
+                order_status=delivery_result["order_status"],
+                delivery_status=delivery_result["delivery_status"],
+            )
+
+        # 4. 실제 배송 상태 + ETA Policy를 조합해 응답
+
+        response = build_order_delivery_eta_response(
+            delivery_result=delivery_result,
+            eta_result=eta_result,
+        )
+
+        return {
+            "route": "delivery_eta",
+            "request": request.model_dump(),
+            "result": {
+                "delivery_result": delivery_result,
+                "eta_result": eta_result,
+            },
+            "response": response,
+        }
 
     # -----------------------------------------------------
-    # 9) 아직 구현하지 않은 기능
+    # 11) 아직 구현하지 않은 기능
     # -----------------------------------------------------
 
     return {

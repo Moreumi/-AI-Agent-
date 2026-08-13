@@ -57,17 +57,36 @@ Pending State 확인
     │       Response
     │
     ├─ Guidance Flow
-    │   └─ payment_method_change
+    │   │
+    │   ├─ payment_method_change
+    │   │   ↓
+    │   │   Payment Method Change Policy
+    │   │   ↓
+    │   │   Guidance Response
+    │   │
+    │   └─ delivery_eta / general
     │       ↓
-    │       Payment Method Change Policy
+    │       Delivery ETA Policy
     │       ↓
-    │       결제수단 직접 변경 불가 판단
-    │       ↓
-    │       취소 후 재주문 안내
-    │       ↓
-    │       Guidance Response
+    │       일반 배송기간 안내
     │       ↓
     │       State 생성 없이 Flow 종료
+    │
+    ├─ Read + Policy Flow
+    │   │
+    │   └─ delivery_eta / order_specific
+    │       ↓
+    │       주문 조회 / 선택
+    │       ↓
+    │       Delivery Service
+    │       ↓
+    │       실제 order_status / delivery_status 조회
+    │       ↓
+    │       Delivery ETA Policy
+    │       ↓
+    │       실제 배송 상태 + 일반 배송 기준 조합
+    │       ↓
+    │       Contextual Response
     │
     └─ Write Flow
         │
@@ -84,13 +103,6 @@ Pending State 확인
         │   └─ 결제 취소
         │       ↓
         │       Refund Flow
-        │       ├─ card → refund_processing
-        │       └─ cash
-        │           → refund_account_required
-        │           → 환불계좌 입력
-        │           → refund_processing
-        │   ↓
-        │   Final Response
         │
         └─ delivery_address_change
             ↓
@@ -139,7 +151,35 @@ payment_method_change
 order_cancel
 delivery_address_change
 delivery_status
+delivery_eta
 ```
+
+`delivery_eta`는 동일한 배송 예상 시기 문의라도
+필요한 정보의 범위에 따라 `delivery_eta_scope`를 함께 반환한다.
+
+```text
+general
+→ 특정 주문과 무관한 일반 배송기간 문의
+
+order_specific
+→ 사용자의 실제 주문 또는 특정 주문의 도착 시기 문의
+```
+
+예를 들어:
+
+```text
+"배송은 보통 얼마나 걸려?"
+→ sub_intent = delivery_eta
+→ delivery_eta_scope = general
+
+"내 주문 언제 와?"
+→ sub_intent = delivery_eta
+→ delivery_eta_scope = order_specific
+```
+
+따라서 Intent Classification은 단순히 기능 종류만 분류하는 것이 아니라,
+해당 기능에서 어떤 처리 경로가 필요한지도
+Structured Output으로 Orchestrator에 전달한다.
 
 분류 결과는 Orchestrator가 다음 처리 경로를 결정하는 데 사용한다.
 
@@ -165,6 +205,7 @@ delivery_status
 - 진행 중인 Action에 따라 Multi-turn State 계속 처리
 - 결제수단 변경과 같은 Policy 안내형 CS의 Guidance Flow Routing
 - 배송 상태 확인 과정에서 주문 조회, 다중 주문 선택 및 Read Flow 종료 제어
+- `delivery_eta_scope`에 따라 일반 Policy 안내와 특정 주문 기반 Read + Policy Flow 분기
 
 즉 개별 기능을 직접 수행하기보다
 **각 Component를 어떤 순서로 호출할지 결정하는 역할**을 담당한다.
@@ -270,6 +311,50 @@ State는 서버 메모리에 저장되므로
 선택된 주문번호를 이후 단계까지 유지하기 위한
 `selected_order_id`나 추가 정보를 위한 `pending_data`는 사용하지 않는다.
 
+배송 예상 시기 문의에서도 `order_specific` 질문에 대해
+고객의 주문이 여러 건 존재하면 State를 사용한다.
+
+```text
+pending_action = delivery_eta_selection
+candidate_orders = 사용자가 선택할 수 있는 주문 목록
+```
+
+예:
+
+```text
+사용자
+"내 주문 언제 와?"
+
+↓
+여러 주문 존재
+
+↓
+delivery_eta_selection State 저장
+
+↓
+Agent
+"배송 예정 시기를 확인할 주문을 선택해 주세요."
+
+↓
+사용자
+"10002번"
+
+↓
+Pending State 우선 처리
+
+↓
+선택한 주문의 Delivery Status 조회
+
+↓
+Delivery ETA Policy 적용
+
+↓
+응답 후 State 초기화
+```
+
+두 번째 사용자 입력은 새로운 Intent로 다시 분류하지 않고,
+기존 `delivery_eta` Flow의 후속 입력으로 처리한다.
+
 ---
 
 ### Service / Data
@@ -344,6 +429,26 @@ check_delivery_status()
 → need_order_selection
 ```
 
+`check_delivery_status()`는 `delivery_status` 전용으로 중복 구현하지 않고,
+특정 주문의 배송 예상 시기를 안내하는 `delivery_eta / order_specific`
+Flow에서도 재사용한다.
+
+```text
+delivery_status
+→ Delivery Service
+→ 현재 배송 상태 자체를 안내
+
+delivery_eta / order_specific
+→ Delivery Service
+→ 실제 배송 상태 조회
+→ Delivery ETA Policy
+→ 현재 상태를 고려한 배송 예상 안내
+```
+
+동일한 주문 식별 및 배송 상태 조회 책임을
+여러 기능에서 공유하고,
+각 기능에서 필요한 이후 판단만 분리한다.
+
 ---
 
 ### Policy Layer
@@ -375,6 +480,9 @@ Delivery Address Change Policy
 
 Payment Method Change Policy
 → 결제 완료 후 결제수단 변경 가능 여부 및 대안 판단
+
+Delivery ETA Policy
+→ 일반 배송기간 기준 제공 및 실제 주문 상태에 따른 배송 예상 안내 가능 여부 판단
 ```
 
 ---
@@ -585,6 +693,50 @@ LLM은 다음 사항을 새롭게 판단하지 않는다.
 일부 Multi-turn 확인 응답과
 Write Action 관련 고정 응답은
 현재 Python 코드에서 직접 생성하고 있다.
+
+#### 조회 결과와 Policy를 함께 사용하는 Flow
+
+모든 기능이 순수 Read, Guidance, Write 중 하나로만 처리되는 것은 아니다.
+
+`delivery_eta / order_specific`에서는
+실제 주문의 현재 상태와 쇼핑몰의 일반 배송 기준이 모두 필요하다.
+
+```text
+Delivery Service
+→ order_status / delivery_status
+
++
+
+Delivery ETA Policy
+→ 일반 배송 소요 기준
+
+↓
+
+현재 주문 상황을 반영한 배송 예상 안내
+```
+
+예를 들어:
+
+```text
+delivery_status = preparing_shipment
+→ 현재 배송 준비 중이라는 실제 사실
++
+배송 시작 후 일반 지역 3~5 영업일이라는 Policy
+→ 배송 시작 이후의 일반적인 소요기간 안내
+```
+
+반면:
+
+```text
+delivery_status = delivered
+→ 이미 배송 완료
+→ 배송 예상 기간을 추가로 안내하지 않음
+```
+
+현재 MVP에는 실시간 택배사 Tracking 정보나
+확정 배송 예정일 데이터가 없기 때문에,
+Policy를 이용해 실제 데이터에 존재하지 않는
+정확한 도착 날짜를 생성하지 않는다.
 
 ---
 

@@ -772,6 +772,246 @@ FastAPI Swagger 기반 Multi-turn End-to-End 테스트를 통해 검증했다.
 
 ---
 
+## 7. 배송 예상 시기 문의를 조건부 Flow로 확장
+
+### 초기 설계
+
+배송 예상 시기 문의는 쇼핑몰의 일반 배송기간을 안내하는
+Guidance Flow로 처리하는 것을 우선 고려했다.
+
+```text
+사용자 질문
+→ Intent Classification
+→ Delivery ETA Policy
+→ 일반 배송기간 안내
+→ Flow 종료
+```
+
+예를 들어 다음과 같은 질문은
+특정 주문 데이터를 조회할 필요가 없다.
+
+```text
+"배송은 보통 얼마나 걸려?"
+"배송 시작하면 며칠 걸려?"
+"제주도는 배송 얼마나 걸려?"
+```
+
+이 경우 쇼핑몰의 일반 배송 기준만으로
+사용자에게 필요한 정보를 제공할 수 있다.
+
+---
+
+### 문제
+
+배송 예상 시기와 관련된 실제 사용자 질문에는
+일반적인 배송기간 문의뿐 아니라
+특정 주문의 도착 시기를 묻는 질문도 존재한다.
+
+예:
+
+```text
+"내 주문 언제 와?"
+"10004번 주문 언제 도착해?"
+```
+
+이 질문에 일반 배송 Policy만 바로 적용하면
+현재 주문이
+
+```text
+배송 준비 중인지
+배송 중인지
+이미 배송 완료되었는지
+취소된 주문인지
+```
+
+확인하지 않은 상태에서 동일한 배송기간을 안내하게 된다.
+
+따라서 같은 `delivery_eta` 질문이라도
+필요한 정보와 처리 과정이 서로 다르다는 문제가 발생했다.
+
+---
+
+### 결정
+
+`delivery_eta`라는 하나의 sub_intent는 유지하되,
+질문의 대상 범위를 나타내는
+`delivery_eta_scope`를 Structured Output에 추가했다.
+
+```text
+delivery_eta_scope
+
+├─ general
+│   → 일반적인 배송기간 문의
+│
+└─ order_specific
+    → 실제 사용자 주문의 도착 시기 문의
+```
+
+Intent를 다음과 같이 과도하게 분리하지 않았다.
+
+```text
+delivery_eta_general
+delivery_eta_order
+```
+
+두 질문 모두 핵심 목적은
+배송 예상 시기를 확인하는 것이기 때문이다.
+
+대신 동일 Intent 내부에서
+필요한 정보의 범위를 별도 필드로 표현하도록 설계했다.
+
+---
+
+### 변경된 구조
+
+#### General
+
+```text
+사용자 질문
+→ Intent Classification
+→ delivery_eta
+→ delivery_eta_scope = general
+→ Delivery ETA Policy
+→ 일반 배송기간 안내
+→ Flow 종료
+```
+
+특정 주문 데이터가 필요하지 않으므로
+주문 조회나 State를 사용하지 않는다.
+
+#### Order Specific
+
+```text
+사용자 질문
+→ Intent Classification
+→ delivery_eta
+→ delivery_eta_scope = order_specific
+→ 주문 조회 / 선택
+→ Delivery Service
+→ order_status / delivery_status 확인
+→ Delivery ETA Policy
+→ 실제 배송 상태 + 일반 배송 기준 조합
+→ 최종 응답
+```
+
+주문이 여러 건 존재하면
+기존 Multi-turn State 구조를 이용하여
+사용자에게 확인할 주문번호를 추가로 입력받는다.
+
+```text
+pending_action = delivery_eta_selection
+```
+
+다음 사용자 입력은 새로운 Intent로 다시 분류하지 않고
+기존 `delivery_eta` Flow의 후속 입력으로 처리한다.
+
+---
+
+### 기존 Component 재사용
+
+특정 주문의 배송 예상 시기를 확인하기 위해
+새로운 주문 조회 Service를 별도로 만들지 않았다.
+
+기존 `delivery_status`에서 사용하는
+
+```text
+check_delivery_status()
+```
+
+를 그대로 재사용하여
+
+```text
+order_status
+delivery_status
+```
+
+를 조회한다.
+
+두 기능의 차이는 조회 이후의 처리에 있다.
+
+```text
+delivery_status
+→ 현재 배송 상태 자체를 응답
+
+delivery_eta / order_specific
+→ 현재 배송 상태 조회
+→ Delivery ETA Policy 적용
+→ 현재 상태를 고려한 배송 예상 안내
+```
+
+이를 통해 동일한 데이터 조회 책임을 중복 구현하지 않고,
+기능별 Business 판단만 분리했다.
+
+---
+
+### 정확한 ETA를 생성하지 않는 이유
+
+현재 MVP 데이터에는 다음 정보가 존재하지 않는다.
+
+```text
+shipping_started_at
+estimated_delivery_date
+tracking_number
+택배사 실시간 Tracking 정보
+```
+
+따라서 현재 배송 상태와 일반 배송 Policy만으로
+정확한 도착 날짜를 임의로 계산하거나 생성하지 않는다.
+
+예를 들어 배송 중인 주문에는
+
+```text
+현재 배송 중이라는 실제 상태
++
+일반적인 배송 소요 기준
++
+정확한 도착일은 현재 데이터로 확인할 수 없다는 제한
+```
+
+을 함께 안내한다.
+
+향후 배송 시작 시각이나 택배사 Tracking Tool이 추가되면
+보다 구체적인 ETA 기능으로 확장할 수 있다.
+
+---
+
+### 결과
+
+`delivery_eta`를 구현하면서
+기존의 단순한
+
+```text
+Read Flow
+Guidance Flow
+Write Flow
+```
+
+구분에 더해,
+
+```text
+Read + Policy Flow
+```
+
+가 명확하게 드러났다.
+
+또한 동일한 사용자 목적이라도
+필요한 정보의 범위에 따라 처리 경로를 다르게 선택할 수 있도록
+
+```text
+Intent
++
+Scope
+→ Routing
+```
+
+구조를 적용했다.
+
+이를 통해 불필요한 데이터 조회는 피하면서도,
+특정 주문을 대상으로 하는 질문에서는
+실제 주문 상태를 반영한 응답을 제공할 수 있게 되었다.
+
+---
+
 ## Current Architecture
 
 현재까지의 구조는 다음과 같다.

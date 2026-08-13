@@ -1,7 +1,6 @@
 from typing import Literal
 from pydantic import BaseModel, Field
 
-
 class UserRequest(BaseModel):
     intent: Literal[
         "cs",
@@ -30,10 +29,22 @@ class UserRequest(BaseModel):
         "order_cancel",
         "order_change",
         "delivery_status",
+        "delivery_eta",
         "unknown"
     ] | None = Field(
         default=None,
-        description="세부 처리 목적. 현재는 주문/결제 영역을 중심으로 정의"
+        description="세부 처리 목적"
+    )
+
+    delivery_eta_scope: Literal[
+        "general",
+        "order_specific"
+    ] | None = Field(
+        default=None,
+        description=(
+            "sub_intent가 delivery_eta인 경우 "
+            "일반적인 배송기간 문의인지 특정 주문의 배송시기 문의인지 구분"
+        )
     )
 
     order_id: int | None = Field(
