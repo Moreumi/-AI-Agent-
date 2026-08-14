@@ -66,7 +66,93 @@ classification_prompt = ChatPromptTemplate.from_messages([
   주문 취소
 
 - order_change:
-  주문 수량 변경
+  주문한 상품의 수량을 특정 수량으로 변경하거나,
+  기존 수량에서 증가 또는 감소시키려는 요청
+
+[quantity_change_type / quantity_value]
+
+sub_intent가 order_change인 경우
+사용자가 요청한 수량 변경 방식을 다음 기준으로 추출한다.
+
+quantity_change_type:
+
+- set:
+  최종 수량을 특정 값으로 지정하는 경우
+
+- increase:
+  현재 수량에서 일정 수량을 추가하려는 경우
+
+- decrease:
+  현재 수량에서 일정 수량을 줄이려는 경우
+
+
+quantity_value:
+
+- 사용자가 직접 요청한 수량 또는 증감 수량을 정수로 반환한다.
+- 현재 주문의 실제 수량을 조회하거나 계산하지 않는다.
+- target_quantity를 계산하지 않는다.
+- 사용자가 수량을 명확하게 말하지 않았다면 null로 반환한다.
+
+
+예:
+
+"수량을 3개로 바꿔줘"
+→ quantity_change_type = set
+→ quantity_value = 3
+
+"2개로 변경해줘"
+→ quantity_change_type = set
+→ quantity_value = 2
+
+"수량을 0개로 바꿔줘"
+→ quantity_change_type = set
+→ quantity_value = 0
+
+"2개 더 추가해줘"
+→ quantity_change_type = increase
+→ quantity_value = 2
+
+"한 개 더 추가해줘"
+→ quantity_change_type = increase
+→ quantity_value = 1
+
+"1개 줄여줘"
+→ quantity_change_type = decrease
+→ quantity_value = 1
+
+"두 개 빼줘"
+→ quantity_change_type = decrease
+→ quantity_value = 2
+
+"2개로 줄여줘"
+→ quantity_change_type = set
+→ quantity_value = 2
+
+"주문 수량을 바꾸고 싶어"
+→ quantity_change_type = null
+→ quantity_value = null
+
+
+중요:
+
+"2개로 줄여줘"는 최종 수량을 2개로 지정한 것이므로 set이다.
+
+"2개 줄여줘"는 현재 수량에서 2개를 감소시키는 것이므로 decrease이다.
+
+사용자가 현재 수량을 함께 말하더라도
+현재 수량을 신뢰하여 target_quantity를 계산하지 않는다.
+
+예:
+
+"지금 3개인데 1개 줄여줘"
+→ quantity_change_type = decrease
+→ quantity_value = 1
+
+실제 current_quantity와 target_quantity 계산은
+이후 주문 데이터를 조회한 Python Service에서 처리한다.
+
+sub_intent가 order_change가 아닌 경우
+quantity_change_type과 quantity_value는 반드시 null로 반환한다.
 
 
 [delivery의 sub_intent]
@@ -219,6 +305,42 @@ delivery_eta_scope는 반드시 null로 반환한다.
 → cs_category = order_payment
 → sub_intent = order_confirmation
 → delivery_eta_scope = null
+→ order_id = null
+
+"10001번 주문 수량을 3개로 바꿔줘"
+→ intent = cs
+→ cs_category = order_payment
+→ sub_intent = order_change
+→ delivery_eta_scope = null
+→ quantity_change_type = set
+→ quantity_value = 3
+→ order_id = 10001
+
+"내 주문 한 개 더 추가해줘"
+→ intent = cs
+→ cs_category = order_payment
+→ sub_intent = order_change
+→ delivery_eta_scope = null
+→ quantity_change_type = increase
+→ quantity_value = 1
+→ order_id = null
+
+"10002번 주문에서 2개 줄여줘"
+→ intent = cs
+→ cs_category = order_payment
+→ sub_intent = order_change
+→ delivery_eta_scope = null
+→ quantity_change_type = decrease
+→ quantity_value = 2
+→ order_id = 10002
+
+"주문 수량을 변경하고 싶어"
+→ intent = cs
+→ cs_category = order_payment
+→ sub_intent = order_change
+→ delivery_eta_scope = null
+→ quantity_change_type = null
+→ quantity_value = null
 → order_id = null
 """
     ),

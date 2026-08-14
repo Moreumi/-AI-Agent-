@@ -143,3 +143,119 @@ def extract_delivery_address(user_input: str) -> str | None:
         return None
 
     return address
+
+# =========================================================
+# 주문 수량 변경 요청 추출
+# =========================================================
+
+def extract_quantity_change_request(
+    user_input: str,
+) -> dict | None:
+    """
+    주문 수량 변경 Multi-turn 과정에서
+    사용자의 후속 수량 입력을 해석한다.
+
+    예:
+    "3개로 바꿔줘" → set / 3
+    "1개 추가해줘" → increase / 1
+    "2개 줄여줘" → decrease / 2
+    """
+
+    normalized_input = user_input.strip().lower()
+
+    # 한글 수량 표현 지원
+    korean_numbers = {
+        "한": 1,
+        "하나": 1,
+        "두": 2,
+        "둘": 2,
+        "세": 3,
+        "셋": 3,
+        "네": 4,
+        "넷": 4,
+        "다섯": 5,
+        "여섯": 6,
+        "일곱": 7,
+        "여덟": 8,
+        "아홉": 9,
+        "열": 10,
+    }
+
+    # -----------------------------------------------------
+    # 1. "N개" 형태 추출
+    # -----------------------------------------------------
+
+    quantity_matches = re.findall(
+        r"(\d+|한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열)\s*개",
+        normalized_input,
+    )
+
+    # 하나의 수량만 명확하게 입력되어야 함
+    if len(quantity_matches) != 1:
+
+        # 사용자가 숫자 하나만 입력한 경우
+        if re.fullmatch(r"\d+", normalized_input):
+            return {
+                "quantity_change_type": "set",
+                "quantity_value": int(normalized_input),
+            }
+
+        return None
+
+    quantity_token = quantity_matches[0]
+
+    if quantity_token.isdigit():
+        quantity_value = int(quantity_token)
+    else:
+        quantity_value = korean_numbers[quantity_token]
+
+    # -----------------------------------------------------
+    # 2. 최종 수량 지정
+    #    "2개로 줄여줘"도 최종 수량 2개로 해석
+    # -----------------------------------------------------
+
+    if re.search(r"개\s*로", normalized_input):
+        quantity_change_type = "set"
+
+    # -----------------------------------------------------
+    # 3. 수량 증가
+    # -----------------------------------------------------
+
+    elif any(
+        keyword in normalized_input
+        for keyword in [
+            "추가",
+            "더",
+            "늘려",
+            "증가",
+        ]
+    ):
+        quantity_change_type = "increase"
+
+    # -----------------------------------------------------
+    # 4. 수량 감소
+    # -----------------------------------------------------
+
+    elif any(
+        keyword in normalized_input
+        for keyword in [
+            "줄여",
+            "빼",
+            "감소",
+        ]
+    ):
+        quantity_change_type = "decrease"
+
+    # -----------------------------------------------------
+    # 5. "3개"처럼 수량만 말한 경우
+    #    현재는 수량 입력을 기다리는 State이므로
+    #    최종 수량 지정으로 처리
+    # -----------------------------------------------------
+
+    else:
+        quantity_change_type = "set"
+
+    return {
+        "quantity_change_type": quantity_change_type,
+        "quantity_value": quantity_value,
+    }

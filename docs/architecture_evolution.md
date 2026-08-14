@@ -1,9 +1,10 @@
 # Architecture Evolution
 
-이 문서는 온라인 쇼핑몰 AI Agent를 구현하면서  
-챗봇의 처리 구조가 어떤 문제를 발견했고, 어떤 판단을 통해 변경되었는지 기록한다.
+이 문서는 온라인 쇼핑몰 AI Agent를 구현하면서
+챗봇의 처리 구조에서 어떤 문제를 발견했고,
+어떤 판단을 통해 Architecture를 변경했는지 기록한다.
 
-단순한 코드 작성 순서가 아니라  
+단순한 코드 작성 순서가 아니라
 **문제 → 설계 결정 → 구조 변화 → 결과**를 중심으로 기록한다.
 
 ---
@@ -12,7 +13,8 @@
 
 ### 초기 구조
 
-처음에는 주문·결제와 관련된 개별 기능을 각각 구현하는 수준에서 시작했다.
+처음에는 주문·결제와 관련된 개별 기능을
+각각 구현하는 수준에서 시작했다.
 
 ```text
 사용자 질문
@@ -23,7 +25,8 @@
 
 ### 문제
 
-개별 함수가 동작하는 것만으로는 실제 챗봇이라고 보기 어려웠다.
+개별 함수가 동작하는 것만으로는
+실제 챗봇이라고 보기 어려웠다.
 
 사용자의 질문이 들어온 이후
 
@@ -36,7 +39,7 @@
 
 ### 결정
 
-개별 기능을 직접 호출하는 구조가 아니라  
+개별 기능을 직접 호출하는 구조가 아니라
 `Orchestrator`가 전체 처리 순서를 관리하도록 구성했다.
 
 또한 주문번호가 부족한 경우에는
@@ -65,8 +68,8 @@ State에 현재 처리 중인 기능과 후보 주문을 저장하고,
 
 ### 결과
 
-주문 완료 확인과 결제 완료 확인 기능이  
-단일 함수 수준이 아니라 멀티턴을 포함한
+주문 완료 확인과 결제 완료 확인 기능이
+단일 함수 수준이 아니라 Multi-turn을 포함한
 End-to-End 챗봇 Flow로 동작하게 되었다.
 
 ---
@@ -75,7 +78,7 @@ End-to-End 챗봇 Flow로 동작하게 되었다.
 
 ### 초기 구조
 
-Service에서 조회한 주문·결제 상태를 기준으로  
+Service에서 조회한 주문·결제 상태를 기준으로
 바로 고객 응답을 생성하는 구조였다.
 
 ```text
@@ -86,8 +89,9 @@ Service 조회
 
 ### 문제
 
-조회된 데이터와 그 데이터의 **업무적 의미를 판단하는 책임**,  
-그리고 고객에게 **자연어로 표현하는 책임**이 명확하게 분리되어 있지 않았다.
+조회된 데이터와 그 데이터의 **업무적 의미를 판단하는 책임**,
+그리고 고객에게 **자연어로 표현하는 책임**이
+명확하게 분리되어 있지 않았다.
 
 예를 들어
 
@@ -95,7 +99,7 @@ Service 조회
 order_status = order_completed
 ```
 
-라는 값을 보고 실제로 "주문 완료"라고 판단하는 것은  
+라는 값을 보고 실제로 "주문 완료"라고 판단하는 것은
 쇼핑몰의 Business Rule에 해당한다.
 
 이 판단까지 LLM에게 맡기면
@@ -117,7 +121,7 @@ payment_status
 → judgment
 ```
 
-LLM은 상태를 판단하지 않고,  
+LLM은 상태를 판단하지 않고,
 Policy에서 이미 확정된 결과를 고객에게
 자연스럽게 설명하는 역할만 담당하도록 했다.
 
@@ -154,7 +158,8 @@ LLM
 
 ### 초기 구조
 
-주문 완료 여부와 결제 완료 여부를 각각 독립적으로 판단했다.
+주문 완료 여부와 결제 완료 여부를
+각각 독립적으로 판단했다.
 
 ```text
 주문 조회
@@ -168,7 +173,7 @@ LLM
 
 ### 문제
 
-각각의 상태만 보면 정상이어도  
+각각의 상태만 보면 정상이어도
 관련 데이터와 함께 확인하면 모순되는 상황이 발생할 수 있다.
 
 예:
@@ -178,7 +183,7 @@ order_status = order_completed
 payment_status = payment_failed
 ```
 
-주문 상태만 확인하면 정상적으로 접수된 주문이지만,  
+주문 상태만 확인하면 정상적으로 접수된 주문이지만,
 결제 상태까지 함께 보면 추가 확인이 필요한 상황이다.
 
 반대로 다음과 같은 경우도 발생할 수 있다.
@@ -188,12 +193,12 @@ order_status = order_failed
 payment_status = payment_completed
 ```
 
-따라서 하나의 상태만으로 고객에게 정상 완료 응답을 제공하면  
+따라서 하나의 상태만으로 고객에게 정상 완료 응답을 제공하면
 잘못된 안내가 발생할 가능성이 있었다.
 
 ### 결정
 
-주문 상태와 결제 상태를 함께 검사하는  
+주문 상태와 결제 상태를 함께 검사하는
 `Order-Payment Consistency Policy`를 추가했다.
 
 예:
@@ -218,8 +223,8 @@ Service 조회
 
 ### 결과
 
-개별 상태가 정상으로 보이더라도  
-관련 데이터와 불일치하면 바로 정상 응답을 생성하지 않고  
+개별 상태가 정상으로 보이더라도
+관련 데이터와 불일치하면 바로 정상 응답을 생성하지 않고
 `needs_review` 상태로 Routing할 수 있게 되었다.
 
 ---
@@ -230,7 +235,7 @@ Service 조회
 
 최종 고객 응답은 하나의 방식으로 생성했다.
 
-따라서 단순한 주문·결제 조회 결과와  
+따라서 단순한 주문·결제 조회 결과와
 정책이나 예외 상황에 대한 설명이
 동일한 응답 방식으로 처리될 수 있었다.
 
@@ -249,7 +254,7 @@ Service 조회
 
 등을 빠르게 확인할 수 있는 구조가 적합하다.
 
-반면 주문과 결제 상태가 서로 다른 경우에는  
+반면 주문과 결제 상태가 서로 다른 경우에는
 단순 정보 나열보다 상황 설명과 후속 안내가 필요하다.
 
 ### 결정
@@ -282,7 +287,7 @@ Service / Data
 
 ### 결과
 
-객관적인 조회 결과와 설명이 필요한 상황을  
+객관적인 조회 결과와 설명이 필요한 상황을
 서로 다른 응답 전략으로 처리할 수 있게 되었다.
 
 또한 **어떤 응답 방식을 사용할지 LLM이 임의로 결정하지 않고
@@ -373,7 +378,7 @@ State를 유지한 상태에서 다시 확인한다.
 
 ### State 확장
 
-멀티턴 승인 과정을 유지하기 위해
+Multi-turn 승인 과정을 유지하기 위해
 다음 State를 사용하도록 했다.
 
 ```text
@@ -486,7 +491,7 @@ Write Action
 ↓
 결제 상태 변경
 ↓
-Refund Flow
+Refund 처리
 ↓
 최종 응답
 ```
@@ -833,7 +838,7 @@ Guidance Flow로 처리하는 것을 우선 고려했다.
 
 ### 결정
 
-`delivery_eta`라는 하나의 sub_intent는 유지하되,
+`delivery_eta`라는 하나의 `sub_intent`는 유지하되,
 질문의 대상 범위를 나타내는
 `delivery_eta_scope`를 Structured Output에 추가했다.
 
@@ -1012,6 +1017,699 @@ Scope
 
 ---
 
+## 8. 주문 변경과 실제 결제·환불 처리를 분리
+
+### 초기 구조
+
+기존 Write Flow에서는
+주문 취소나 배송지 변경처럼 하나의 Action을 수행한 뒤
+해당 데이터의 상태를 직접 변경하는 구조를 사용했다.
+
+예를 들어 배송지 변경은 다음과 같이 처리할 수 있었다.
+
+```text
+배송지 변경 요청
+→ Policy 판단
+→ 사용자 승인
+→ Action 직전 재검증
+→ delivery_address 변경
+```
+
+주문 수량 변경도 처음에는
+비슷한 Write Flow로 처리할 수 있다고 생각했다.
+
+```text
+수량 변경 요청
+→ 변경 가능 여부 판단
+→ 사용자 승인
+→ quantity 변경
+→ total_price 변경
+```
+
+---
+
+### 문제 1. 주문금액과 실제 결제금액의 의미가 달라짐
+
+주문 수량이 변경되면
+단순히 주문 데이터 하나만 변경되는 것이 아니라
+결제 금액과의 관계도 함께 달라진다.
+
+예를 들어 기존 주문이 다음과 같은 경우:
+
+```text
+quantity = 3
+unit_price = 20,000
+total_price = 60,000
+
+payment_amount = 60,000
+```
+
+사용자가 수량을 2개로 변경하면
+새로운 주문금액은 다음과 같다.
+
+```text
+quantity = 2
+total_price = 40,000
+```
+
+하지만 실제 PG에서 부분 환불을 수행하지 않은 상태에서
+결제 데이터까지 다음과 같이 변경하면 문제가 발생한다.
+
+```text
+payment_amount
+60,000 → 40,000
+```
+
+이 값은 실제로 40,000원만 결제되었다는 의미처럼 보이지만,
+실제 고객은 아직 60,000원을 결제한 상태이다.
+
+반대로 수량을 증가시킨 경우에도
+추가 결제가 실제로 수행되지 않았는데
+`payment_amount`를 증가시키면
+완료되지 않은 결제를 완료된 사실처럼 기록하게 된다.
+
+즉 주문 수량 변경에서는 다음 세 값을
+하나의 값으로 취급할 수 없었다.
+
+```text
+현재 주문의 금액
+≠
+실제로 이미 결제된 금액
+≠
+앞으로 처리해야 할 결제 차액
+```
+
+---
+
+### 결정 1. Payment Adjustment 분리
+
+주문 데이터의 변경과
+실제 결제 처리를 서로 다른 책임으로 분리했다.
+
+```text
+orders.total_price
+→ 변경된 주문의 현재 금액
+
+payments.payment_amount
+→ 실제로 이미 결제된 금액
+
+payment_adjustments
+→ 추가 결제 또는 부분 환불이 필요한 결제 차액
+```
+
+주문 수량 변경이 승인되면
+`quantity`와 `total_price`는
+실제 주문 상태에 맞게 변경한다.
+
+하지만 외부 PG 추가 결제 또는 환불이 아직 수행되지 않았으므로
+`payments.payment_amount`는 변경하지 않는다.
+
+대신 결제 차액을 별도의
+`payment_adjustments`에 기록한다.
+
+예:
+
+```text
+기존
+quantity = 3
+total_price = 60,000
+payment_amount = 60,000
+
+↓
+
+2개로 변경
+
+↓
+
+orders
+quantity = 2
+total_price = 40,000
+
+payments
+payment_amount = 60,000
+
+payment_adjustments
+adjustment_type = partial_refund_required
+adjustment_amount = 20,000
+adjustment_status = pending
+```
+
+수량이 증가하는 경우에도 동일한 원칙을 적용한다.
+
+```text
+기존 3개
+→ 변경 후 5개
+
+주문금액
+60,000 → 100,000
+
+실제 결제금액
+60,000 유지
+
+결제 차액
+40,000
+additional_payment_required
+pending
+```
+
+---
+
+### 계산 책임도 분리
+
+사용자가 말한 수량 표현과
+실제 목표 수량 계산 역시 분리했다.
+
+LLM은 다음 정보만 Structured Output으로 추출한다.
+
+```text
+"5개로 바꿔줘"
+→ set / 5
+
+"2개 더 추가해줘"
+→ increase / 2
+
+"1개 줄여줘"
+→ decrease / 1
+```
+
+LLM이 실제 주문의 현재 수량을 추측하거나
+최종 목표 수량을 계산하지 않는다.
+
+```text
+사용자 표현
+↓
+LLM
+→ quantity_change_type
+→ quantity_value
+
+↓
+
+실제 주문 조회
+
+↓
+
+Python Business Logic
+→ current_quantity 확인
+→ target_quantity 계산
+→ new_total_price 계산
+→ adjustment 계산
+```
+
+이를 통해 자연어 해석과
+실제 데이터에 기반한 계산 책임을 분리했다.
+
+---
+
+### 1차 변경 구조
+
+처음에는 주문 수량 변경 이후
+발생한 결제 차액을 기록하는 것까지를
+MVP의 처리 범위로 두었다.
+
+```text
+주문 수량 변경
+↓
+Order Change Action
+↓
+quantity / total_price 변경
+↓
+Payment Adjustment 생성
+↓
+additional_payment_required
+또는
+partial_refund_required
+↓
+pending
+↓
+최종 응답
+```
+
+이 구조에서는 실제 외부 PG 처리를 하지 않으면서도
+주문 데이터와 결제 데이터의 의미를
+잘못 섞지 않을 수 있었다.
+
+---
+
+### 문제 2. 부분 환불 필요 상태만 기록하면 CS Flow가 끝나지 않음
+
+수량 감소 Flow를 End-to-End 관점에서 다시 확인하면서
+추가적인 문제가 발견되었다.
+
+예를 들어 고객이
+
+```text
+"10007번 주문 1개 줄여줘"
+```
+
+라고 요청하여
+
+```text
+3개 → 2개
+60,000원 → 40,000원
+부분 환불 필요 금액 = 20,000원
+```
+
+이 계산되었는데,
+
+Agent가
+
+```text
+부분 환불이 필요합니다.
+현재 pending 상태입니다.
+```
+
+라고 답변하고 Flow를 종료하면
+사용자 입장에서는 실제 환불 처리가
+어디까지 진행되는지 알 수 없다.
+
+즉
+
+```text
+partial_refund_required
+```
+
+는 **환불이 필요하다는 판단 결과**이지,
+**환불 절차 자체의 상태**를 의미하지 않았다.
+
+다음 두 데이터의 책임을
+다시 구분할 필요가 생겼다.
+
+```text
+payment_adjustments
+→ 왜 얼마의 차액 처리가 필요한가
+
+refunds
+→ 실제 환불 절차가 현재 어떤 상태인가
+```
+
+---
+
+### 대안 검토. 새로운 사용자 입력처럼 환불 요청을 다시 만들지 않음
+
+부분 환불이 필요한 경우
+내부적으로 다음과 같은 새로운 사용자 입력을 만들어
+
+```text
+"환불해줘"
+```
+
+다시 Intent Classification부터 실행하는 방법도 고려할 수 있었다.
+
+하지만 이미 Order Change Flow에서 다음 정보가 확정되어 있다.
+
+```text
+order_id
+payment_id
+refund_amount
+refund_type
+refund_reason
+adjustment_id
+```
+
+이미 알고 있는 정보를 버리고
+가상의 사용자 질문을 만들어 다시 LLM에 전달하면
+
+```text
+불필요한 Intent Classification
++
+이미 확정된 Context의 재해석
++
+기존 Flow와 새로운 Flow 사이의 연결 관계 불명확
+```
+
+문제가 생길 수 있다.
+
+따라서 새로운 사용자 입력을 만드는 방식은 사용하지 않았다.
+
+---
+
+### 결정 2. Refund Service를 별도 Component로 분리하고 Orchestrator에서 연결
+
+부분 환불 처리 책임을
+Order Change Service 내부에 직접 넣는 대신
+별도의 `Refund Service`로 분리했다.
+
+```text
+Order Change
+↓
+partial_refund_required
+↓
+Orchestrator
+↓
+Refund Service
+```
+
+Order Change Service는
+
+```text
+주문 수량 변경
+주문금액 변경
+결제 차액 계산
+```
+
+까지 담당하고,
+
+Refund Service는
+
+```text
+환불 데이터 생성
+결제수단 확인
+환불 상태 관리
+환불계좌 등록
+```
+
+을 담당하도록 책임을 분리했다.
+
+두 Component 사이의 연결은
+Orchestrator가 담당한다.
+
+이렇게 구성한 이유는
+Service가 다른 Service의 실행 순서까지 결정하게 하지 않고,
+**기능 간 연결과 실행 순서는 Orchestrator가 관리한다는
+기존 Architecture 원칙을 유지하기 위해서이다.**
+
+---
+
+### 결제수단에 따른 Refund 분기
+
+부분 환불이라는 결과는 같아도
+실제 다음 단계는 결제수단에 따라 달랐다.
+
+#### 카드
+
+카드는 기존 결제정보가 존재하므로
+별도의 환불계좌를 사용자에게 받을 필요가 없다.
+
+```text
+partial_refund_required
+↓
+Refund Service
+↓
+payment_method = card
+↓
+Refund 데이터 생성
+↓
+refund_processing
+```
+
+#### 계좌이체
+
+계좌이체는 환불을 진행하기 위해
+사용자의 환불계좌 정보가 추가로 필요하다.
+
+```text
+partial_refund_required
+↓
+Refund Service
+↓
+payment_method = cash
+↓
+Refund 데이터 생성
+↓
+refund_account_required
+↓
+Pending State 저장
+↓
+환불계좌 입력
+↓
+refund_processing
+```
+
+따라서 동일한 부분 환불 Flow 안에서도
+**다음 단계에 필요한 정보가 서로 다르기 때문에 조건 분기**를 적용했다.
+
+---
+
+### Refund State에서 refund_id를 사용
+
+계좌이체 부분 환불에서는
+다음 사용자 입력까지 현재 환불 건을 유지해야 했다.
+
+처음에는 주문번호인 `order_id`만으로
+환불 데이터를 다시 찾는 방법도 가능했지만,
+하나의 주문에서 여러 부분 환불이 발생할 가능성을 고려하면
+어떤 환불 건을 처리하고 있는지 모호해질 수 있다.
+
+따라서 Pending State에
+현재 환불 건의 `refund_id`를 저장하도록 했다.
+
+```python
+state = {
+    "pending_action": "collect_partial_refund_account",
+    "candidate_orders": [],
+    "selected_order_id": 10007,
+    "pending_data": {
+        "refund_id": 70001,
+        "refund_amount": 20000,
+        "refund_type": "partial",
+        "source": "order_change",
+    },
+}
+```
+
+사용자가 다음 턴에
+
+```text
+"국민은행 / 1234567890 / 홍길동"
+```
+
+을 입력하면 새로운 Intent로 분류하지 않고,
+
+```text
+Pending State
+↓
+refund_id 확인
+↓
+해당 Refund 데이터 조회
+↓
+계좌정보 저장
+↓
+refund_processing
+```
+
+으로 기존 부분 환불 Flow를 이어서 처리한다.
+
+---
+
+### 외부 PG와 내부 환불 상태의 경계
+
+Refund Service를 추가했지만
+실제 외부 PG(Payment Gateway) 환불 API가
+연결된 것은 아니다.
+
+따라서 Agent가
+
+```text
+환불이 완료되었습니다.
+```
+
+라고 응답하거나
+
+```text
+refund_completed
+```
+
+상태를 생성하면
+실제로 수행되지 않은 금융 거래를
+완료된 사실처럼 기록하게 된다.
+
+현재 MVP에서는 다음과 같이 구분한다.
+
+```text
+partial_refund_required
+→ 환불 필요 금액이 발생했다는 사실
+
+refund_account_required
+→ 환불 진행을 위해 추가 계좌정보가 필요한 상태
+
+refund_processing
+→ 내부 환불 절차를 시작한 상태
+
+refund_completed
+→ 실제 외부 환불 완료
+→ 현재 MVP에서는 생성하지 않음
+```
+
+즉 Refund Service가 추가되었더라도
+현재 시스템이 보장할 수 있는 범위는
+`refund_processing`까지이다.
+
+---
+
+### 최종 변경 구조
+
+주문 수량 변경 Flow는 최종적으로 다음과 같이 확장되었다.
+
+```text
+사용자 주문 수량 변경 요청
+↓
+Intent Classification
+↓
+quantity_change_type / quantity_value 추출
+↓
+Orchestrator
+↓
+주문 / 결제 조회
+↓
+Order Change Policy
+↓
+변경 가능 여부 판단
+↓
+실제 current_quantity 조회
+↓
+Python Business Logic
+├─ target_quantity 계산
+├─ new_total_price 계산
+└─ Payment Adjustment 계산
+↓
+변경 Preview
+↓
+사용자 최종 승인
+↓
+Action 직전 주문 / 배송 / 결제 상태 재검증
+↓
+Order Change Action
+├─ quantity 변경
+└─ total_price 변경
+↓
+payment_amount 유지
+↓
+Payment Adjustment 생성
+↓
+adjustment_type 확인
+│
+├─ additional_payment_required
+│   ↓
+│   추가 결제 필요 상태
+│   ↓
+│   pending
+│
+└─ partial_refund_required
+    ↓
+    Orchestrator
+    ↓
+    Refund Service
+    ↓
+    결제수단 확인
+    │
+    ├─ card
+    │   ↓
+    │   Refund 데이터 생성
+    │   ↓
+    │   refund_processing
+    │
+    └─ cash
+        ↓
+        Refund 데이터 생성
+        ↓
+        refund_account_required
+        ↓
+        Pending State
+        ↓
+        환불계좌 입력
+        ↓
+        refund_processing
+↓
+Final Response
+```
+
+---
+
+### 결과
+
+기존 Write Flow의
+
+```text
+Policy 판단
+≠
+사용자 승인
+≠
+Write Action
+```
+
+원칙에 더해,
+주문 수량 변경을 구현하면서 다음 책임 경계가 추가되었다.
+
+```text
+LLM의 자연어 해석
+≠
+실제 데이터 기반 계산
+
+주문 데이터 변경
+≠
+실제 결제 데이터
+
+결제 차액
+≠
+환불 절차의 진행 상태
+
+Order Change Service
+≠
+Refund Service
+```
+
+또한 기능 간 연결 책임은 다음과 같이 유지했다.
+
+```text
+Order Change Service
+→ 주문 변경 책임
+
+Refund Service
+→ 환불 처리 책임
+
+Orchestrator
+→ 두 Component의 실행 순서와 조건 분기 연결
+```
+
+이를 통해 외부 결제 시스템이 아직 연결되지 않은 MVP에서도
+실제로 발생하지 않은 결제·환불 완료 상태를 생성하지 않으면서,
+주문 수량 감소 이후의 부분 환불 절차까지
+하나의 사용자 요청에서 End-to-End로 연결할 수 있게 되었다.
+
+현재 추가 결제는
+
+```text
+additional_payment_required
+→ payment_adjustments
+→ pending
+```
+
+까지 구현되어 있고,
+
+부분 환불은
+
+```text
+partial_refund_required
+→ Refund Service
+→ refund_processing
+```
+
+까지 확장되어 있다.
+
+향후 실제 PG 또는 결제 Tool이 연결되면
+각 상태를 기준으로
+
+```text
+additional_payment_required
+→ 추가 결제 Tool
+
+refund_processing
+→ 실제 환불 API
+→ 성공 시 refund_completed
+```
+
+과 같이 외부 결제 처리 단계로 확장할 수 있다.
+
+이번 구조는 Policy, 수량 계산, Service, State,
+사용자 최종 승인, Action-time Recheck,
+Write Action, Payment Adjustment, Refund Service,
+카드·계좌이체 분기 및 End-to-End 테스트를 통해 검증했다.
+
+전체 Regression Test에서는
+**140개 테스트가 모두 통과했다.**
+
+---
+
 ## Current Architecture
 
 현재까지의 구조는 다음과 같다.
@@ -1035,38 +1733,71 @@ Pending State 확인
     Routing
     │
     ├─ Read Flow
-    │   ├─ 주문 완료 확인
-    │   └─ 결제 완료 확인
-    │
-    │   ↓
-    │   Service / Data
-    │   ↓
-    │   Policy Layer
-    │   ↓
-    │   필요한 경우 Consistency Check
-    │   ↓
-    │   Response Mode Selection
-    │   ├─ fact_summary
-    │   └─ narrative_guidance
-    │   ↓
-    │   Output Prompt + LLM
-    │   ↓
-    │   Final Response
+    │   │
+    │   ├─ order_confirmation
+    │   ├─ payment_confirmation
+    │   │   ↓
+    │   │   Service / Data
+    │   │   ↓
+    │   │   Policy Layer
+    │   │   ↓
+    │   │   필요한 경우 Consistency Check
+    │   │   ↓
+    │   │   Response Mode Selection
+    │   │   ├─ fact_summary
+    │   │   └─ narrative_guidance
+    │   │   ↓
+    │   │   Output Prompt + LLM
+    │   │   ↓
+    │   │   Final Response
+    │   │
+    │   └─ delivery_status
+    │       ↓
+    │       Delivery Service
+    │       ↓
+    │       현재 배송 상태 조회
+    │       ↓
+    │       Response
     │
     ├─ Guidance Flow
-    │   └─ 결제수단 변경
+    │   │
+    │   ├─ payment_method_change
+    │   │   ↓
+    │   │   Payment Method Change Policy
+    │   │   ↓
+    │   │   직접 변경 불가 판단
+    │   │   ↓
+    │   │   취소 후 재주문 안내
+    │   │   ↓
+    │   │   State 생성 없이 Flow 종료
+    │   │
+    │   └─ delivery_eta / general
     │       ↓
-    │       Payment Method Change Policy
+    │       Delivery ETA Policy
     │       ↓
-    │       직접 변경 불가 판단
-    │       ↓
-    │       취소 후 재주문 안내
+    │       일반 배송기간 안내
     │       ↓
     │       State 생성 없이 Flow 종료
     │
+    ├─ Read + Policy Flow
+    │   │
+    │   └─ delivery_eta / order_specific
+    │       ↓
+    │       주문 조회 / 선택
+    │       ↓
+    │       Delivery Service
+    │       ↓
+    │       order_status / delivery_status 조회
+    │       ↓
+    │       Delivery ETA Policy
+    │       ↓
+    │       실제 배송 상태 + 일반 배송 기준 조합
+    │       ↓
+    │       Contextual Response
+    │
     └─ Write Flow
         │
-        ├─ 주문 취소
+        ├─ order_cancel
         │   ↓
         │   Service / Data 조회
         │   ↓
@@ -1082,7 +1813,7 @@ Pending State 확인
         │   ├─ Order Cancel
         │   └─ Payment Cancel
         │       ↓
-        │       Refund Flow
+        │       기존 Refund 처리
         │       ├─ card
         │       │   → refund_processing
         │       │
@@ -1095,25 +1826,160 @@ Pending State 확인
         │   ↓
         │   Final Response
         │
-        └─ 배송지 변경
+        ├─ delivery_address_change
+        │   ↓
+        │   Service / Data 조회
+        │   ↓
+        │   Delivery Address Change Policy
+        │   ↓
+        │   필요 시 주문 선택
+        │   ↓
+        │   새 배송지 수집
+        │   ↓
+        │   pending_data 임시 저장
+        │   ↓
+        │   사용자 최종 승인
+        │   ↓
+        │   Action 직전 Policy 재검증
+        │   ↓
+        │   Delivery Address Change Action
+        │   ↓
+        │   State 초기화
+        │   ↓
+        │   Final Response
+        │
+        └─ order_change
             ↓
-            Service / Data 조회
+            주문 / 결제 조회
             ↓
-            Delivery Address Change Policy
+            Order Change Policy
             ↓
-            필요 시 주문 선택
+            변경 가능 여부 판단
             ↓
-            새 배송지 수집
+            실제 current_quantity 조회
             ↓
-            pending_data 임시 저장
+            Python Business Logic
+            ├─ target_quantity 계산
+            ├─ new_total_price 계산
+            └─ Payment Adjustment 계산
+            ↓
+            변경 Preview
             ↓
             사용자 최종 승인
             ↓
-            Action 직전 Policy 재검증
+            Action 직전 주문 / 배송 / 결제 상태 재검증
             ↓
-            Delivery Address Change Action
+            Order Change Action
+            ├─ quantity 변경
+            └─ total_price 변경
+            ↓
+            payment_amount 유지
+            ↓
+            Payment Adjustment 생성
+            ↓
+            차액 유형 분기
+            │
+            ├─ additional_payment_required
+            │   ↓
+            │   pending
+            │
+            └─ partial_refund_required
+                ↓
+                Orchestrator
+                ↓
+                Refund Service
+                ↓
+                결제수단 분기
+                │
+                ├─ card
+                │   ↓
+                │   refund_processing
+                │
+                └─ cash
+                    ↓
+                    refund_account_required
+                    ↓
+                    collect_partial_refund_account
+                    ↓
+                    환불계좌 입력
+                    ↓
+                    refund_processing
             ↓
             State 초기화
             ↓
             Final Response
 ```
+
+현재 Architecture에서는 기능의 성격에 따라
+모든 요청에 동일한 Component를 적용하지 않는다.
+
+```text
+Read Flow
+→ 실제 데이터 조회
+
+Guidance Flow
+→ Business Policy 안내
+
+Read + Policy Flow
+→ 실제 데이터와 Policy 조합
+
+Write Flow
+→ 사용자 승인과 Action-time Recheck 이후 실제 데이터 변경
+```
+
+또한 현재 Write Flow에서는 다음 원칙을 유지한다.
+
+```text
+Policy 판단
+≠
+사용자 승인
+≠
+Write Action
+```
+
+주문 수량 변경에서는 여기에 다음 책임 경계를 추가했다.
+
+```text
+LLM 자연어 해석
+≠
+실제 데이터 기반 계산
+
+주문 데이터 변경
+≠
+실제 결제금액 변경
+
+Payment Adjustment
+≠
+Refund 상태
+
+Order Change Service
+≠
+Refund Service
+```
+
+기능 간 연결은 Orchestrator가 담당한다.
+
+```text
+Component A 결과
+↓
+Orchestrator가 결과 확인
+↓
+필요한 경우에만 Component B 호출
+```
+
+예를 들어:
+
+```text
+Order Change
+↓
+partial_refund_required
+↓
+Refund Service
+```
+
+처럼 앞 단계의 결과가
+다음 Component를 실행할 조건이 된다.
+
+이를 기준으로 향후 새로운 CS 기능과 외부 Tool을 연결하더라도
+각 Component의 책임과 데이터의 의미를 분리하면서
+전체 Orchestration 구조를 확장한다.

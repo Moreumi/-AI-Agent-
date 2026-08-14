@@ -3,7 +3,7 @@
 온라인 쇼핑몰에서 고객의 문의를 이해하고,  
 CS 응대와 상품 추천을 처리할 수 있는 AI Agent를 개발하는 프로젝트입니다.
 
-현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 결제수단 변경 / 주문 취소 / 배송지 변경 / 배송 상태 확인 / 배송 예상 시기 안내**를 중심으로
+현재는 CS 기능 중 **주문 완료 확인 / 결제 완료 확인 / 결제수단 변경 / 주문 취소 / 주문 수량 변경 / 배송지 변경 / 배송 상태 확인 / 배송 예상 시기 안내**를 중심으로 구현하고 있습니다.
 
 ---
 
@@ -166,6 +166,43 @@ Order Cancel Policy를 다시 적용합니다.
 또한 최초 판단 이후 배송이 시작되는 상황을 방지하기 위해
 실제 Action 실행 직전에 주문 상태와 배송 상태를 다시 확인합니다.
 
+### 주문 수량 변경
+
+```text
+사용자 질문
+→ Intent Classification
+→ 주문 / 결제 조회
+→ Order Change Policy
+→ 수량 변경 가능 여부 판단
+→ 목표 수량 및 주문금액 계산
+→ 결제 차액 계산
+→ 변경 Preview
+→ 사용자 최종 승인
+→ Action 직전 주문 / 배송 / 결제 상태 재검증
+→ 주문 수량 및 주문금액 변경
+→ Payment Adjustment 생성
+→ 차액 유형에 따른 후속 Flow 분기
+    ├─ 추가 결제 필요
+    │   → additional_payment_required
+    │   → 추가 결제 대기
+    │
+    └─ 부분 환불 필요
+        → partial_refund_required
+        → Refund Flow
+        ├─ 카드: refund_processing
+        └─ 계좌이체: refund_account_required
+            → 환불계좌 입력
+            → refund_processing
+→ 최종 응답
+```
+
+따라서 수량 변경으로 주문금액이 달라져도
+기존 payment_amount를 임의로 수정하지 않습니다.
+
+또한 Preview 이후 사용자에게 최종 승인을 받고,
+Action 실행 직전에 주문 상태, 배송 상태, 결제 상태를 다시 확인한 뒤
+조건이 유지되는 경우에만 실제 Write Action을 실행합니다.
+
 ### 배송 상태 확인
 
 ```text
@@ -261,7 +298,16 @@ Pending State 확인
     │
     └─ Write Flow
         ├─ order_cancel
-        └─ delivery_address_change
+        ├─ delivery_address_change
+        └─ order_change
+            → 주문 / 결제 조회
+            → Order Change Policy
+            → 수량 / 금액 / 결제 차액 계산
+            → Preview
+            → 사용자 최종 승인
+            → Action-time Recheck
+            → Order Write
+            → Payment Adjustment
 ```
 ### 역할 분리
 
@@ -356,6 +402,31 @@ Write Flow
 결제 완료 후 직접 변경할 수 없다는 정책 안내가 핵심이므로
 불필요한 주문 조회, State, 사용자 승인, Write Action을 추가하지 않았습니다.
 
+### 주문금액과 실제 결제금액의 분리
+
+주문 수량이 변경되었다고 해서
+실제 결제가 즉시 완료된 것으로 처리하지 않습니다.
+
+예를 들어 기존 3개, 60,000원 주문을 2개, 40,000원으로 변경하면:
+
+```text
+orders.total_price
+60,000 → 40,000
+→ 변경된 주문의 현재 금액
+
+payments.payment_amount
+60,000 유지
+→ 실제로 이미 결제된 금액
+
+payment_adjustments
+20,000 / partial_refund_required / pending
+→ 외부 결제 시스템에서 이후 처리해야 할 차액
+```
+
+이를 통해 주문 데이터 변경과 실제 결제 처리를 분리하고,
+외부 PG 연동이 없는 MVP에서 결제 완료 상태를 임의로 생성하지 않도록 했습니다.
+
+
 ---
 
 ## 6. Project Structure
@@ -364,13 +435,14 @@ Write Flow
 app/
 ├── data/
 │   └── sample_data.py
-│       # MVP 테스트용 주문 / 결제 / 환불 데이터
+│       # MVP 테스트용 주문 / 결제 / 환불 / 결제 차액 데이터
 │
 ├── policies/
 │   ├── order_completion_policy.py
 │   ├── payment_completion_policy.py
 │   ├── order_payment_consistency_policy.py
 │   ├── order_cancel_policy.py
+│   ├── order_change_policy.py
 │   ├── delivery_address_change_policy.py
 │   └── payment_method_change_policy.py
 │       # Business Rule 및 상태 판단

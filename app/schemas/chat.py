@@ -46,7 +46,26 @@ class UserRequest(BaseModel):
             "일반적인 배송기간 문의인지 특정 주문의 배송시기 문의인지 구분"
         )
     )
+    quantity_change_type: Literal[
+        "set",
+        "increase",
+        "decrease"
+    ] | None = Field(
+        default=None,
+        description=(
+            "sub_intent가 order_change인 경우 "
+            "수량을 특정 값으로 변경하는지, 증가시키는지, 감소시키는지 구분"
+        )
+    )
 
+    quantity_value: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "sub_intent가 order_change인 경우 "
+            "사용자가 요청한 수량 또는 증감 수량"
+        )
+    )
     order_id: int | None = Field(
         default=None,
         description="사용자 질문에 주문번호가 명시된 경우 해당 주문번호"
